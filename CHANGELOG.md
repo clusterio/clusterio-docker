@@ -11,6 +11,17 @@ change notice: container → sha → this file.
 Format: `## YYYY-MM-DD` heading + short bullets. Always state the Clusterio /
 Factorio versions when they change.
 
+## 2026-11-06
+
+- **Images moved to the clusterio organisation**: the repository is now
+  `clusterio/clusterio-docker`, and images publish as
+  `ghcr.io/clusterio/clusterio-docker-controller` / `-host` (CI derives the names from the
+  repository). The old `ghcr.io/solarcloud7/clusterio-docker-*` images and pins stay
+  pullable, but nothing new is published there — `2.0.3.r1` is their last pin; the first pin
+  under the new name is `2.0.3.r2`. `docker-compose.yml` defaults and the image `source` /
+  `vendor` labels point at the new location. Clusterio `2.0.3`, unchanged; no image content
+  change beyond the labels.
+
 ## 2026-10-28
 
 - **Clusterio `2.0.3`** (from `2.0.2`) — upstream feature release. Factorio target unchanged

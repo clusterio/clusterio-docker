@@ -13,8 +13,8 @@ How to use clusterio-docker images in a downstream project.
 
 ```yaml
 # Example: pull the stable images
-image: ghcr.io/solarcloud7/clusterio-docker-controller:latest
-image: ghcr.io/solarcloud7/clusterio-docker-host:latest
+image: ghcr.io/clusterio/clusterio-docker-controller:latest
+image: ghcr.io/clusterio/clusterio-docker-host:latest
 ```
 
 > **Production: pin `:<version>.rN`, not `:latest` or the bare version.** `:latest`,
@@ -24,9 +24,14 @@ image: ghcr.io/solarcloud7/clusterio-docker-host:latest
 > uses `:latest` for zero-config first runs; override `CLUSTERIO_IMAGE_TAG=<version>.rN` in
 > `.env` for anything you depend on.
 
+> **Moved to the clusterio organisation (2026-11-06):** images publish as
+> `ghcr.io/clusterio/clusterio-docker-{controller,host}`. The old
+> `ghcr.io/solarcloud7/clusterio-docker-*` images stay pullable, but nothing new is published
+> there; `2.0.3.r1` is their last pin. Switch the image name when you move to `:2.0.3.r2` or later.
+
 > **Migrating off old `:1` / `:1.x` / `:1.x.y` tags:** the independent repo-SemVer tag axis
 > is **retired** — those tags are frozen at their last build and receive **no** further
-> updates. Re-pin to `:<version>.rN` (e.g. `:2.0.3.r1`).
+> updates. Re-pin to `:<version>.rN` (e.g. `:2.0.3.r2`).
 
 > **Migrating off `:2.0.0-alpha.27-r1` .. `-r4` (hyphen scheme):** these four were published
 > before a SemVer-precedence bug in the separator was caught (a hyphen makes `27-r1` sort as
@@ -48,7 +53,7 @@ image: ghcr.io/solarcloud7/clusterio-docker-host:latest
 ```yaml
 services:
   clusterio-controller:
-    image: ghcr.io/solarcloud7/clusterio-docker-controller:latest
+    image: ghcr.io/clusterio/clusterio-docker-controller:latest
     hostname: clusterio-controller          # MUST stay as-is (hosts connect to this)
     ports:
       - "8080:8080"
@@ -68,7 +73,7 @@ services:
       - DEFAULT_MOD_PACK=Space Age 2.1
 
   clusterio-host-1:
-    image: ghcr.io/solarcloud7/clusterio-docker-host:latest
+    image: ghcr.io/clusterio/clusterio-docker-host:latest
     hostname: clusterio-host-1              # MUST follow clusterio-host-N pattern
     depends_on:
       clusterio-controller:

@@ -31,11 +31,11 @@ ARG NODE_IMAGE=node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f
 FROM ${NODE_IMAGE} AS base
 
 # OCI Image Labels
-LABEL org.opencontainers.image.source="https://github.com/solarcloud7/clusterio-docker" \
+LABEL org.opencontainers.image.source="https://github.com/clusterio/clusterio-docker" \
       org.opencontainers.image.title="Clusterio Host" \
       org.opencontainers.image.description="Clusterio host with Factorio headless server" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="solarcloud7"
+      org.opencontainers.image.vendor="clusterio"
 
 # Build arguments for host configuration
 # Factorio headless: by DEFAULT the image does NOT bundle Factorio — Wube's EULA

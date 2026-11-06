@@ -1,9 +1,9 @@
 # Clusterio Docker
 
-[![Docker Build](https://github.com/solarcloud7/clusterio-docker/actions/workflows/docker-build.yml/badge.svg)](https://github.com/solarcloud7/clusterio-docker/actions/workflows/docker-build.yml)
+[![Docker Build](https://github.com/clusterio/clusterio-docker/actions/workflows/docker-build.yml/badge.svg)](https://github.com/clusterio/clusterio-docker/actions/workflows/docker-build.yml)
 [![Clusterio](https://img.shields.io/badge/clusterio-2.0.3-blue)](https://www.npmjs.com/package/@clusterio/controller)
-[![Controller image](https://img.shields.io/badge/ghcr.io-controller-24292f?logo=github)](https://github.com/solarcloud7/clusterio-docker/pkgs/container/clusterio-docker-controller)
-[![Host image](https://img.shields.io/badge/ghcr.io-host-24292f?logo=github)](https://github.com/solarcloud7/clusterio-docker/pkgs/container/clusterio-docker-host)
+[![Controller image](https://img.shields.io/badge/ghcr.io-controller-24292f?logo=github)](https://github.com/clusterio/clusterio-docker/pkgs/container/clusterio-docker-controller)
+[![Host image](https://img.shields.io/badge/ghcr.io-host-24292f?logo=github)](https://github.com/clusterio/clusterio-docker/pkgs/container/clusterio-docker-host)
 
 Docker images for running [Clusterio](https://github.com/clusterio/clusterio) - a clustered Factorio server manager.
 
@@ -43,12 +43,12 @@ Pre-built images are published to the GitHub Container Registry:
 
 | Image | Description |
 |-------|-------------|
-| `ghcr.io/solarcloud7/clusterio-docker-controller` | Web UI, API, and cluster coordination |
-| `ghcr.io/solarcloud7/clusterio-docker-host` | Factorio server host (runs game instances) |
+| `ghcr.io/clusterio/clusterio-docker-controller` | Web UI, API, and cluster coordination |
+| `ghcr.io/clusterio/clusterio-docker-host` | Factorio server host (runs game instances) |
 
 ```bash
-docker pull ghcr.io/solarcloud7/clusterio-docker-controller:latest
-docker pull ghcr.io/solarcloud7/clusterio-docker-host:latest
+docker pull ghcr.io/clusterio/clusterio-docker-controller:latest
+docker pull ghcr.io/clusterio/clusterio-docker-host:latest
 ```
 
 ### Image tags & provenance
@@ -59,7 +59,7 @@ for reproducibility:
 
 | Tag | Meaning | Mutability |
 |-----|---------|------------|
-| `:2.0.3.r1` | Clusterio version **+** docker revision | **immutable pin — pin this** |
+| `:2.0.3.r2` | Clusterio version **+** docker revision | **immutable pin — pin this** |
 | `:2.0.3` | bundled Clusterio version (`main` builds) | moves as the docker layer rebuilds |
 | `:latest` | newest `main` build | moves |
 | `:main` | newest `main` build (alias of `:latest`) | moves |
@@ -123,7 +123,7 @@ and container logs into the new volumes **before recreating containers**. Follow
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/solarcloud7/clusterio-docker.git
+   git clone https://github.com/clusterio/clusterio-docker.git
    cd clusterio-docker
    ```
 
@@ -162,7 +162,7 @@ docker run -d \
   -v controller-data:/clusterio/data \
   -v shared-tokens:/clusterio/tokens \
   -e INIT_CLUSTERIO_ADMIN=your_username \
-  ghcr.io/solarcloud7/clusterio-docker-controller
+  ghcr.io/clusterio/clusterio-docker-controller
 ```
 
 ### Host
@@ -175,7 +175,7 @@ docker run -d \
   -v shared-tokens:/clusterio/tokens:ro \
   -e CLUSTERIO_HOST_TOKEN=your_host_token \
   -e CONTROLLER_URL=http://your-controller:8080/ \
-  ghcr.io/solarcloud7/clusterio-docker-host
+  ghcr.io/clusterio/clusterio-docker-host
 ```
 
 ---
@@ -220,14 +220,14 @@ docker run -d -p 8080:8080 \
   -v ./data/controller:/clusterio/data \
   -v ./tokens:/clusterio/tokens \
   -e INIT_CLUSTERIO_ADMIN=admin \
-  ghcr.io/solarcloud7/clusterio-docker-controller
+  ghcr.io/clusterio/clusterio-docker-controller
 
 # Host  
 docker run -d -p 34100-34199:34100-34199/udp \
   -v ./data/host:/clusterio/data \
   -v ./tokens:/clusterio/tokens:ro \
   -e CLUSTERIO_HOST_TOKEN=your_token \
-  ghcr.io/solarcloud7/clusterio-docker-host
+  ghcr.io/clusterio/clusterio-docker-host
 ```
 
 ---
@@ -329,7 +329,7 @@ For standalone containers or custom host names:
      -v host-data:/clusterio/data \
      -e CLUSTERIO_HOST_TOKEN=eyJhbGci... \
      -e CONTROLLER_URL=http://your-controller:8080/ \
-     ghcr.io/solarcloud7/clusterio-docker-host
+     ghcr.io/clusterio/clusterio-docker-host
    ```
 
 ### Option 3: Web UI

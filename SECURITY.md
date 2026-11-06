@@ -11,8 +11,8 @@ repository. We aim to acknowledge reports within a few days.
 
 Only the latest published images are maintained:
 
-- `ghcr.io/solarcloud7/clusterio-docker-controller`
-- `ghcr.io/solarcloud7/clusterio-docker-host`
+- `ghcr.io/clusterio/clusterio-docker-controller`
+- `ghcr.io/clusterio/clusterio-docker-host`
 
 Use the `:latest` tag or a specific published version tag. Older tags are not
 back-patched.

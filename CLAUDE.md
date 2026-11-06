@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 | Image | Purpose |
 |-------|---------|
-| `ghcr.io/solarcloud7/clusterio-docker-controller` | Web UI, API, cluster coordination |
-| `ghcr.io/solarcloud7/clusterio-docker-host` | Factorio headless server host (runs game instances) |
+| `ghcr.io/clusterio/clusterio-docker-controller` | Web UI, API, cluster coordination |
+| `ghcr.io/clusterio/clusterio-docker-host` | Factorio headless server host (runs game instances) |
 
 **Note**: GHCR image names include `-docker-` because the CI derives them from the repository name (`clusterio-docker`).
 
@@ -345,8 +345,8 @@ git checkout -b my-feature
 git push  # → CI builds :my-feature images from the fork's branch
 
 # Consumer project uses the tagged images:
-#   image: ghcr.io/solarcloud7/clusterio-docker-controller:my-feature
-#   image: ghcr.io/solarcloud7/clusterio-docker-host:my-feature
+#   image: ghcr.io/clusterio/clusterio-docker-controller:my-feature
+#   image: ghcr.io/clusterio/clusterio-docker-host:my-feature
 ```
 
 `main`, tags, and PRs into `main` use `CLUSTERIO_TARGET=release` (npm registry packages); non-main branch pushes and PRs into `factorio-*` branches build `custom`.
@@ -408,9 +408,9 @@ Set `"instance.auto_start": false` to prevent auto-starting after seeding.
 **Fix**: Rename folder to match exactly (e.g., `clusterio-host-1`)
 
 ### 4. Consumer Projects: Image Names Include `-docker-`
-**Symptom**: Image pull fails with `ghcr.io/solarcloud7/clusterio-controller`
+**Symptom**: Image pull fails with `ghcr.io/clusterio/clusterio-controller`
 **Cause**: GHCR CI derives image name from repo name (`clusterio-docker`)
-**Fix**: Use `ghcr.io/solarcloud7/clusterio-docker-controller` and `ghcr.io/solarcloud7/clusterio-docker-host`
+**Fix**: Use `ghcr.io/clusterio/clusterio-docker-controller` and `ghcr.io/clusterio/clusterio-docker-host`
 
 ### 5. Controller Hostname Must Stay `clusterio-controller`
 **Symptom**: Hosts can't connect to controller

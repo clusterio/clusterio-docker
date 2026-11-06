@@ -26,11 +26,11 @@ ARG NODE_IMAGE=node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f
 FROM ${NODE_IMAGE} AS base
 
 # OCI Image Labels
-LABEL org.opencontainers.image.source="https://github.com/solarcloud7/clusterio-docker" \
+LABEL org.opencontainers.image.source="https://github.com/clusterio/clusterio-docker" \
       org.opencontainers.image.title="Clusterio Controller" \
       org.opencontainers.image.description="Clusterio cluster controller with web UI and API" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.vendor="solarcloud7"
+      org.opencontainers.image.vendor="clusterio"
 
 # Build arguments for controller configuration
 ARG CONTROLLER_HTTP_PORT=8080

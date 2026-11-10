@@ -120,6 +120,8 @@ RUN mkdir -p /etc/clusterio/pre-start.d /clusterio/logs /clusterio/mods /cluster
 COPY --chmod=755 scripts/stream-logs.sh /scripts/stream-logs.sh
 COPY --chmod=755 scripts/install-plugins.sh /scripts/install-plugins.sh
 COPY --chmod=755 scripts/seed-mods.sh /scripts/seed-mods.sh
+# Sourced by seed-instances.sh and regenerate-export-data.sh; must sit beside them.
+COPY scripts/export-host-lib.sh /scripts/export-host-lib.sh
 COPY --chmod=755 scripts/seed-instances.sh /scripts/seed-instances.sh
 COPY --chmod=755 scripts/regenerate-export-data.sh /scripts/regenerate-export-data.sh
 COPY scripts/patches/disable-immutable-cache.js /scripts/patches/disable-immutable-cache.js

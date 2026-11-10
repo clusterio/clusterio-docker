@@ -37,12 +37,11 @@ done
 
 CONTROL_CONFIG="${CONTROL_CONFIG:-/clusterio/tokens/config-control.json}"
 
-# host-entrypoint.sh points host.factorio_directory here when the host has no game
-# client (FACTORIO_HOME in Dockerfile.host). Only this exact path is treated as
-# headless, so a custom Factorio layout is never refused. It is an inference from
-# configuration, not a look at the host's files: a host NOT built from these images
-# that has the full game at this path is refused too, and needs --allow-headless.
-HEADLESS_FACTORIO_DIR="/opt/factorio"
+# HEADLESS_FACTORIO_DIR and host_factorio_dir: what counts as a headless host, shared
+# with seed-instances.sh. A host NOT built from these images that has the full game
+# at that path is refused too, and needs --allow-headless.
+# shellcheck source=scripts/export-host-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/export-host-lib.sh"
 
 ctl() {
   gosu clusterio npx clusterioctl --log-level error "$@" --config "$CONTROL_CONFIG"
@@ -57,19 +56,15 @@ lookup() {
 # Prints host.factorio_directory of the host the instance is assigned to.
 # Fails when the instance is unknown or unassigned, or its host does not answer.
 #
-# Each clusterioctl answer is captured whole before it is parsed. Parsing it through
-# a pipe that stops reading early (awk exit, grep -q) can break the writer's pipe,
-# and under pipefail that turns a good answer into a failed lookup.
+# The instance list is captured whole before it is parsed, for the reason given at
+# host_factorio_dir in export-host-lib.sh.
 export_host_factorio_dir() {
-  local instances host_id config dir
+  local instances host_id
   instances=$(lookup instance list) || return 1
   host_id=$(awk -F'|' -v i="$INSTANCE" \
     'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($1)==i && !found {print t($3); found=1}' <<<"$instances")
   [[ "$host_id" =~ ^[0-9]+$ ]] || return 1
-  config=$(lookup host config list "$host_id") || return 1
-  dir=$(sed -nE 's/^host\.factorio_directory[[:space:]]+"?([^"]*)"?[[:space:]]*$/\1/p' <<<"$config" | head -1)
-  [ -n "$dir" ] || return 1
-  printf '%s\n' "$dir"
+  host_factorio_dir "$host_id" "$CONTROL_CONFIG"
 }
 
 # Checked BEFORE the instance is stopped, so a refusal leaves everything as it was.

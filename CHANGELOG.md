@@ -39,6 +39,8 @@ Factorio versions when they change.
   manifest assets, the files under `/clusterio/static`, the prototype dump and the instance
   restart. With credentials set as repository secrets it instead requires an unrefused export
   with real icons. A stubbed gate test covers the client-host and fail-closed branches.
+- New controller-image file `scripts/export-host-lib.sh`: the one controller-side definition
+  of a headless host, sourced by `seed-instances.sh` and `regenerate-export-data.sh`.
 - Docs: `docs/asset-export.md` no longer says a headless export fails or that seeding retries
   the export 60 times (the seed-time export has been a single attempt since it was added).
   Clusterio `2.0.3`, unchanged.

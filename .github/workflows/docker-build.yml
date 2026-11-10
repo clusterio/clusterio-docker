@@ -520,24 +520,23 @@ jobs:
           HAS_CLIENT: ${{ steps.setup.outputs.has_client }}
         run: |
           CTL="docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json"
-          REGENERATE="docker exec clusterio-controller /scripts/regenerate-export-data.sh TestInstance"
+          # regenerate <seconds> [flags]: the time limit runs INSIDE the container, so a
+          # timed-out script is actually stopped (exit 124). `timeout` around `docker exec`
+          # only kills the docker client and leaves the script running in the container.
+          regenerate() {
+            local limit="$1"; shift
+            docker exec clusterio-controller timeout "$limit" /scripts/regenerate-export-data.sh TestInstance "$@"
+          }
           # The manifest is fetched once per state change (each fetch is a docker exec plus
           # a clusterioctl start-up) and assets are parsed from the saved text.
           read_manifest() { MANIFEST=$($CTL mod-pack show "Space Age 2.1" | sed -n '/^exportManifest:/,$p'); }
           asset() { printf '%s\n' "$MANIFEST" | sed -nE "s/^    $1: (.+)$/\1/p" | head -1; }
           instance_status() { $CTL instance list 2>/dev/null | awk -F'|' '{gsub(/ /,"",$1); gsub(/ /,"",$5)} $1=="TestInstance"{print $5}'; }
-          # Non-zero bytes in the spritesheet's decoded pixel data: 0 means every icon is blank.
+          # Non-zero bytes of the spritesheet's reconstructed pixels: 0 means every icon is
+          # blank. The counter lives in tests/ (unit-tested by the gates job) and is piped
+          # into the controller's node, since tests/ is not part of the image.
           sheet_pixels() {
-            docker exec clusterio-controller node -e '
-              const fs = require("fs"), zlib = require("zlib");
-              const b = fs.readFileSync(process.argv[1]); const idat = [];
-              for (let o = 8; o < b.length;) {
-                const len = b.readUInt32BE(o);
-                if (b.toString("ascii", o + 4, o + 8) === "IDAT") { idat.push(b.subarray(o + 8, o + 8 + len)); }
-                o += 12 + len;
-              }
-              let n = 0; for (const x of zlib.inflateSync(Buffer.concat(idat))) { if (x) { n++; } }
-              console.log(n);' "/clusterio/static/$1"
+            docker exec -i clusterio-controller node - "/clusterio/static/$1" < tests/spritesheet-pixels.cjs
           }
 
           # Seeding normally exported once already (EXPORT_HOST=1), so a manifest exists to
@@ -553,12 +552,12 @@ jobs:
 
           if [ "$HAS_CLIENT" = "true" ]; then
             echo "=== host-1 has the game client: the script must export without the override ==="
-            timeout 300 $REGENERATE \
+            regenerate 300 \
               && echo "PASS: export-data completed on the client host" \
               || { echo "FAIL: export-data failed on the client host"; docker logs clusterio-host-1 2>&1 | tail -40; exit 1; }
           else
             echo "=== host-1 is headless: the script must refuse and change nothing ==="
-            rc=0; timeout 120 $REGENERATE || rc=$?
+            rc=0; regenerate 120 || rc=$?
             # Exit 3 is "host is headless" specifically; a failed lookup exits 4, so this
             # also proves the script identified host-1's Factorio directory.
             [ "$rc" -eq 3 ] \
@@ -573,7 +572,7 @@ jobs:
               || { echo "FAIL: TestInstance is '$(instance_status)' after a refused run"; exit 1; }
 
             echo "=== --allow-headless: the export itself works on a headless host ==="
-            timeout 300 $REGENERATE --allow-headless \
+            regenerate 300 --allow-headless \
               && echo "PASS: export-data completed" \
               || { echo "FAIL: export-data failed"; docker logs clusterio-host-1 2>&1 | tail -40; exit 1; }
           fi

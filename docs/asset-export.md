@@ -84,6 +84,11 @@ refresh prototypes, locale and settings on a cluster that has no client at all:
 docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-name> --allow-headless
 ```
 
+"Headless" is inferred from configuration, not from the host's files: the script treats a
+host as headless when its `host.factorio_directory` is exactly `/opt/factorio`, the directory
+these images use when no client is installed. A host **not** built from these images that has
+the full game installed at that path is therefore refused too — pass `--allow-headless` for it.
+
 The raw `clusterioctl instance export-data` command and the web UI's export action are
 upstream Clusterio and have **no such guard** — on a headless host they overwrite silently.
 

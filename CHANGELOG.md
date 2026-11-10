@@ -19,7 +19,10 @@ Factorio versions when they change.
   silently blanked every web-UI icon. The script now checks the instance's host first and
   exits without stopping the instance or exporting when that host is headless (exit `3`) or
   cannot be queried (exit `4`). Pass `--allow-headless` to export anyway (refreshes prototypes,
-  locale and settings with blank icons). Hosts with a client are unaffected. The raw
+  locale and settings with blank icons). Hosts with a client are unaffected — with one
+  exception: "headless" means `host.factorio_directory` is exactly `/opt/factorio`, so a host
+  not built from these images that has the full game at that path is refused too and needs
+  the flag. The raw
   `clusterioctl instance export-data` and the web UI's export action are upstream and remain
   unguarded.
 - **Seed-time export is unchanged but now reports the blank case**: when `EXPORT_HOST` has no

@@ -85,7 +85,7 @@ run_case() {
   : > "$CALL_LOG"
   set +e
   env PATH="$WORK/bin:$PATH" CALL_LOG="$CALL_LOG" CONTROL_CONFIG="$WORK/config-control.json" \
-    "${envs[@]}" bash "$SCRIPT" "$@" > "$WORK/out" 2>&1
+    ${envs[@]+"${envs[@]}"} bash "$SCRIPT" "$@" > "$WORK/out" 2>&1
   local rc=$?
   set -e
   if [ "$rc" -ne "$expected" ]; then

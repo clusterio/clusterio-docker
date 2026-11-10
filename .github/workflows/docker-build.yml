@@ -521,8 +521,10 @@ jobs:
         run: |
           CTL="docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json"
           REGENERATE="docker exec clusterio-controller /scripts/regenerate-export-data.sh TestInstance"
-          manifest() { $CTL mod-pack show "Space Age 2.1" | sed -n '/^exportManifest:/,$p'; }
-          asset() { manifest | sed -nE "s/^    $1: (.+)$/\1/p" | head -1; }
+          # The manifest is fetched once per state change (each fetch is a docker exec plus
+          # a clusterioctl start-up) and assets are parsed from the saved text.
+          read_manifest() { MANIFEST=$($CTL mod-pack show "Space Age 2.1" | sed -n '/^exportManifest:/,$p'); }
+          asset() { printf '%s\n' "$MANIFEST" | sed -nE "s/^    $1: (.+)$/\1/p" | head -1; }
           instance_status() { $CTL instance list 2>/dev/null | awk -F'|' '{gsub(/ /,"",$1); gsub(/ /,"",$5)} $1=="TestInstance"{print $5}'; }
           # Non-zero bytes in the spritesheet's decoded pixel data: 0 means every icon is blank.
           sheet_pixels() {
@@ -538,10 +540,16 @@ jobs:
               console.log(n);' "/clusterio/static/$1"
           }
 
-          # Seeding already exported once (EXPORT_HOST=1), so a manifest exists to protect.
+          # Seeding normally exported once already (EXPORT_HOST=1), so a manifest exists to
+          # protect. That export is a single attempt whose failure is only a warning, so
+          # its absence is reported, not failed: the exports below are the real test.
+          read_manifest
           BEFORE=$(asset spritesheet)
-          [ -n "$BEFORE" ] || { echo "FAIL: seeding left no export manifest on the mod pack"; manifest; exit 1; }
-          echo "Spritesheet after seeding: $BEFORE"
+          if [ -n "$BEFORE" ]; then
+            echo "Spritesheet after seeding: $BEFORE"
+          else
+            echo "::warning::Seeding left no export manifest (its one export attempt failed); continuing with the export checks"
+          fi
 
           if [ "$HAS_CLIENT" = "true" ]; then
             echo "=== host-1 has the game client: the script must export without the override ==="
@@ -556,6 +564,7 @@ jobs:
             [ "$rc" -eq 3 ] \
               && echo "PASS: refused with exit 3 (host identified as headless)" \
               || { echo "FAIL: expected the headless refusal (exit 3), got exit $rc"; exit 1; }
+            read_manifest
             [ "$(asset spritesheet)" = "$BEFORE" ] \
               && echo "PASS: export manifest untouched by the refusal" \
               || { echo "FAIL: the refused run changed the export manifest"; exit 1; }
@@ -570,10 +579,11 @@ jobs:
           fi
 
           echo "=== Export manifest lists every asset and each file was written ==="
+          read_manifest
           for key in settings prototypes metadata spritesheet locale; do
             FILE=$(asset "$key")
             [ -n "$FILE" ] \
-              || { echo "FAIL: export manifest has no '$key' asset"; manifest; exit 1; }
+              || { echo "FAIL: export manifest has no '$key' asset"; printf '%s\n' "$MANIFEST"; exit 1; }
             docker exec clusterio-controller test -s "/clusterio/static/$FILE" \
               || { echo "FAIL: manifest entry $key -> $FILE is missing from /clusterio/static"; exit 1; }
             echo "PASS: $key -> $FILE"

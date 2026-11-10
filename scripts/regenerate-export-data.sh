@@ -39,7 +39,9 @@ CONTROL_CONFIG="${CONTROL_CONFIG:-/clusterio/tokens/config-control.json}"
 
 # host-entrypoint.sh points host.factorio_directory here when the host has no game
 # client (FACTORIO_HOME in Dockerfile.host). Only this exact path is treated as
-# headless, so a custom Factorio layout is never refused.
+# headless, so a custom Factorio layout is never refused. It is an inference from
+# configuration, not a look at the host's files: a host NOT built from these images
+# that has the full game at this path is refused too, and needs --allow-headless.
 HEADLESS_FACTORIO_DIR="/opt/factorio"
 
 ctl() {
@@ -54,20 +56,25 @@ lookup() {
 
 # Prints host.factorio_directory of the host the instance is assigned to.
 # Fails when the instance is unknown or unassigned, or its host does not answer.
+#
+# Each clusterioctl answer is captured whole before it is parsed. Parsing it through
+# a pipe that stops reading early (awk exit, grep -q) can break the writer's pipe,
+# and under pipefail that turns a good answer into a failed lookup.
 export_host_factorio_dir() {
-  local host_id dir
-  host_id=$(lookup instance list \
-    | awk -F'|' -v i="$INSTANCE" 'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($1)==i {print t($3); exit}') || return 1
+  local instances host_id config dir
+  instances=$(lookup instance list) || return 1
+  host_id=$(awk -F'|' -v i="$INSTANCE" \
+    'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($1)==i && !found {print t($3); found=1}' <<<"$instances")
   [[ "$host_id" =~ ^[0-9]+$ ]] || return 1
-  dir=$(lookup host config list "$host_id" \
-    | sed -nE 's/^host\.factorio_directory[[:space:]]+"?([^"]*)"?[[:space:]]*$/\1/p' | head -1) || return 1
+  config=$(lookup host config list "$host_id") || return 1
+  dir=$(sed -nE 's/^host\.factorio_directory[[:space:]]+"?([^"]*)"?[[:space:]]*$/\1/p' <<<"$config" | head -1)
   [ -n "$dir" ] || return 1
   printf '%s\n' "$dir"
 }
 
 # Checked BEFORE the instance is stopped, so a refusal leaves everything as it was.
 if [ "$ALLOW_HEADLESS" = "true" ]; then
-  echo "NOTE: --allow-headless given — if '$INSTANCE' is on a host without the game client, every web-UI icon in this export will be blank."
+  echo "NOTE: --allow-headless given — host check skipped. If the host of '$INSTANCE' has no game client, every web-UI icon in this export will be blank."
 else
   if ! factorio_dir=$(export_host_factorio_dir); then
     echo "ERROR: could not determine whether the host of '$INSTANCE' has the game client (is the instance assigned, and its host connected?)." >&2
@@ -76,11 +83,13 @@ else
     exit 4
   fi
   if [ "$factorio_dir" = "$HEADLESS_FACTORIO_DIR" ]; then
-    echo "ERROR: the host of '$INSTANCE' has no game client (host.factorio_directory is $factorio_dir)." >&2
+    echo "ERROR: the host of '$INSTANCE' looks headless: host.factorio_directory is $factorio_dir, the directory" >&2
+    echo "       these images use when no game client is installed." >&2
     echo "       Not exporting: a headless export succeeds but writes a blank spritesheet, and it would replace" >&2
     echo "       the mod pack's export manifest — wiping the icons of any earlier client export." >&2
     echo "       Use an instance on a host with the game client (EXPORT_HOST), or pass --allow-headless to refresh" >&2
-    echo "       prototypes, locale and settings with blank icons (docs/asset-export.md)." >&2
+    echo "       prototypes, locale and settings with blank icons. Also pass it if this host is not built from" >&2
+    echo "       these images and really has the full game installed at that path (docs/asset-export.md)." >&2
     exit 3
   fi
 fi

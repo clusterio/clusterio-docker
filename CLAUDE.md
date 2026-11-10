@@ -31,6 +31,7 @@ clusterio-docker/
 │   ├── controller-entrypoint.sh   # Controller startup: first-run detection, bootstrap, seeding
 │   ├── host-entrypoint.sh         # Host startup: token loading, config, desync detection
 │   ├── seed-instances.sh          # Instance creation, assignment, save upload, auto-start
+│   ├── export-host-lib.sh         # Sourced by seed-instances.sh + regenerate-export-data.sh: what counts as a headless host
 │   ├── seed-mods.sh               # Mod upload to controller
 │   ├── install-plugins.sh         # External plugin npm install
 │   ├── install-release.cjs        # Release target: npm install of @clusterio/* at CLUSTERIO_VERSION + CLUSTERIO_PLUGINS

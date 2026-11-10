@@ -1,8 +1,10 @@
 # Asset Export — the Factorio game client & `export-data`
 
-Clusterio's web UI needs icon spritesheets, prototype data, and locale strings that only the
-**full game client** contains — the headless server ships no graphics. This repo automates the
-whole flow: getting a client onto one host, and running `export-data` against it.
+Clusterio's web UI needs icon spritesheets, prototype data, and locale strings. Prototypes,
+locale and settings export from any host, but the icons need the **full game client** — the
+headless server ships no graphics, so an export from a headless host succeeds with a blank
+spritesheet. This repo automates the whole flow: getting a client onto one host, and running
+`export-data` against it.
 
 **Licensing**: the client is downloaded with **your** factorio.com credentials and is never
 redistributed. Never push an image with a baked-in client to a public registry.
@@ -54,22 +56,44 @@ EXPORT_HOST=1        # host ID that has the game client; 0/empty = skip export
 ```
 
 During first-run seeding, the controller runs `clusterioctl instance export-data` **once**,
-against the first auto-start instance on that host — retrying up to 60×10 s while the host
-finishes booting (a fresh client download can take a while). Failure is a logged WARNING, not
-fatal: the cluster still comes up, just without web-UI icons.
+against the first auto-start instance on that host, before starting it. Failure is a logged
+WARNING, not fatal: the cluster still comes up, without export data.
+
+**If that host has no game client the export still succeeds** — prototypes, locale and settings
+are exported, and the spritesheet is blank, so every web-UI icon is blank. Seeding logs a NOTE
+when this happens. Once the host has a client, regenerate (below).
 
 **After any Factorio / client / mod-pack version change, regenerate** — the seed-time export
-does not re-run, so a version bump otherwise ships blank "?" icons:
+does not re-run, so a version bump otherwise ships stale prototypes and icons:
 
 ```bash
 docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-name>
 ```
 
-(The script stops the instance, retries `export-data` up to 6×, and restarts it. The raw
-`clusterioctl instance export-data` command remains available for manual control.)
+(The script stops the instance, retries `export-data` up to 6×, and restarts it.)
 
-Misconfiguration guard: setting `SKIP_CLIENT=true` on the host that `EXPORT_HOST` designates
-logs a **WARNING at host startup** — that combination guarantees a failed export.
+**An export replaces the mod pack's whole export manifest.** A headless export run after a
+client export therefore swaps the good spritesheet for a blank one; the old file stays in
+`/clusterio/static`, but nothing points at it any more. `regenerate-export-data.sh` guards
+against this: it checks the instance's host first and **refuses (exit 3, nothing stopped or
+changed) when that host is headless**. If it cannot tell — the instance is unassigned or its
+host does not answer — it refuses with exit 4. Pass `--allow-headless` to export anyway — useful to
+refresh prototypes, locale and settings on a cluster that has no client at all:
+
+```bash
+docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-name> --allow-headless
+```
+
+"Headless" is inferred from configuration, not from the host's files: the script treats a
+host as headless when its `host.factorio_directory` is exactly `/opt/factorio`, the directory
+these images use when no client is installed. A host **not** built from these images that has
+the full game installed at that path is therefore refused too — pass `--allow-headless` for it.
+
+The raw `clusterioctl instance export-data` command and the web UI's export action are
+upstream Clusterio and have **no such guard** — on a headless host they overwrite silently.
+
+Misconfiguration guard: when `EXPORT_HOST` (set in `.env`, so it reaches the host) designates a
+host that resolves to the headless directory, the host logs a **WARNING at startup**.
 
 ## What export-data produces
 
@@ -92,8 +116,14 @@ the web-UI consumption API changed in **alpha.24** (clusterio#875 — `useExport
   instance pins. The entrypoint logs which version(s) it found at startup — compare against
   `factorio.version` in the instance config. A client install is a *single* version; keep the
   client's `FACTORIO_CLIENT_TAG` aligned with your instances' target version.
-- **Export WARNING after 60 retries**: usually the client isn't installed on that host
-  (credentials missing, or `SKIP_CLIENT=true`), or the instance failed to start — check the
-  host log.
-- **Icons missing/stale in the web UI** after changing mods: re-run `export-data` manually
-  (see above) — seeding only runs it on first boot.
+- **All icons blank in the web UI, no errors anywhere**: the last export ran on a headless
+  host (credentials missing, or `SKIP_CLIENT=true`). The host log shows
+  `Running in headless mode` for the export. Get a client onto the export host, then
+  regenerate.
+- **`regenerate-export-data.sh` exits 3 or 4**: 3 means the instance's host is headless; 4
+  means the instance is unassigned or its host could not be queried. Nothing was changed —
+  see "An export replaces…" above.
+- **Export WARNING during seeding**: the export itself failed (instance or host problem) —
+  check the host log.
+- **Icons missing/stale in the web UI** after changing mods: regenerate (see above) — seeding
+  only runs the export on first boot.

@@ -11,6 +11,40 @@ change notice: container → sha → this file.
 Format: `## YYYY-MM-DD` heading + short bullets. Always state the Clusterio /
 Factorio versions when they change.
 
+## 2026-11-09
+
+- **`regenerate-export-data.sh` now refuses a headless host** (behaviour change). An export
+  from a host without the game client does not fail: it succeeds with a blank spritesheet,
+  and it replaces the mod pack's whole export manifest — so run after a client export it
+  silently blanked every web-UI icon. The script now checks the instance's host first and
+  exits without stopping the instance or exporting when that host is headless (exit `3`) or
+  cannot be queried (exit `4`). Pass `--allow-headless` to export anyway (refreshes prototypes,
+  locale and settings with blank icons). Hosts with a client are unaffected — with one
+  exception: "headless" means `host.factorio_directory` is exactly `/opt/factorio`, so a host
+  not built from these images that has the full game at that path is refused too and needs
+  the flag. The raw
+  `clusterioctl instance export-data` and the web UI's export action are upstream and remain
+  unguarded.
+- **Seed-time export is unchanged but now reports the blank case**: when `EXPORT_HOST` has no
+  game client, seeding logs a NOTE that icons are blank instead of a bare "Export-data
+  complete". The old failure hint blaming a missing client is gone — a missing client was
+  never a failure.
+- **Host startup warning corrected and widened**: it claimed the export "will fail" and only
+  fired for `SKIP_CLIENT=true`. It now says the export succeeds with blank icons, and fires
+  for any headless export host (when `EXPORT_HOST` reaches the host's environment).
+- **CI runs the export-data test on every build.** The `Verify export-data` step was gated
+  on Factorio account credentials that were never configured, so it had been skipped in
+  every run since it was added. It now runs headless: it asserts the refusal (exit `3`,
+  manifest and instance untouched), then exports with `--allow-headless` and checks the
+  manifest assets, the files under `/clusterio/static`, the prototype dump and the instance
+  restart. With credentials set as repository secrets it instead requires an unrefused export
+  with real icons. A stubbed gate test covers the client-host and fail-closed branches.
+- New controller-image file `scripts/export-host-lib.sh`: the one controller-side definition
+  of a headless host, sourced by `seed-instances.sh` and `regenerate-export-data.sh`.
+- Docs: `docs/asset-export.md` no longer says a headless export fails or that seeding retries
+  the export 60 times (the seed-time export has been a single attempt since it was added).
+  Clusterio `2.0.3`, unchanged.
+
 ## 2026-11-06
 
 - **Images moved to the clusterio organisation**: the repository is now

@@ -76,6 +76,10 @@ ARG FACTORIO_CLIENT_SHA256=""
 
 # Environment variables (can be overridden at runtime)
 #
+# FACTORIO_HOME's value is also written in scripts/export-host-lib.sh
+# (HEADLESS_FACTORIO_DIR), which the controller uses to recognise a headless host —
+# change both together.
+#
 # FACTORIO_HOME is a *parent* directory holding versioned Factorio installs as
 # subdirectories (multi-version layout), NOT a direct install. By default it starts
 # empty and Clusterio downloads the mod-pack's target headless version at runtime

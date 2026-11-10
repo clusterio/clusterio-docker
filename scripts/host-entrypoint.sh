@@ -125,12 +125,19 @@ else
     echo "No game client present — using headless directory $FACTORIO_DIR (auto-update enabled)"
 fi
 
-# Config-contradiction guard: EXPORT_HOST designates a host to run export-data,
-# which needs the full game client — SKIP_CLIENT=true on that same host
-# guarantees blank web-UI icons via a distant, confusing failure. Warn at the
-# source instead (docs/asset-export.md).
-if [ "${EXPORT_HOST:-0}" = "$HOST_ID" ] && [ "${SKIP_CLIENT:-false}" = "true" ]; then
-  echo "WARNING: EXPORT_HOST=$EXPORT_HOST designates THIS host ($HOST_NAME) for export-data, but SKIP_CLIENT=true forces headless — export will fail and web-UI icons will be blank (docs/asset-export.md)" >&2
+# Export-host guard: EXPORT_HOST designates a host to run export-data. On a host
+# without the game client the export still SUCCEEDS, but writes a blank
+# spritesheet — every web-UI icon is blank and nothing fails. Warn at the source
+# instead (docs/asset-export.md). Only fires when EXPORT_HOST reaches this
+# container's environment (e.g. set in .env); the controller's seeding logs the
+# same condition either way.
+if [ "${EXPORT_HOST:-0}" = "$HOST_ID" ] && [ "$FACTORIO_DIR" = "$FACTORIO_HOME" ]; then
+  if [ "${SKIP_CLIENT:-false}" = "true" ]; then
+    headless_reason="SKIP_CLIENT=true forces headless"
+  else
+    headless_reason="it has no game client installed"
+  fi
+  echo "WARNING: EXPORT_HOST=$EXPORT_HOST designates THIS host ($HOST_NAME) for export-data, but $headless_reason — the export will succeed with a blank spritesheet, so every web-UI icon will be blank (docs/asset-export.md)" >&2
 fi
 
 # Diagnostic: report which Factorio version(s) are present in the resolved directory. Clusterio

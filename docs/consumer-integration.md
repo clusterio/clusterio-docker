@@ -115,7 +115,7 @@ Export-data generates item icons, recipe data, and spritesheets for the web UI.
 - During first-run seeding, before starting the first instance on the export host, the controller runs `clusterioctl instance export-data`
 - The host launches Factorio with `--export-data` to generate graphical assets
 - Runs once per seeding — subsequent instances skip it
-- If export fails (no game client), it logs a warning and continues
+- If the export host has no game client the export still succeeds, with a blank spritesheet (blank web-UI icons); seeding logs a NOTE. If the export itself fails, seeding logs a warning and continues
 - Assets are served at the controller's `/export/` endpoints
 
 **Set `EXPORT_HOST=0` or empty to skip export entirely.**

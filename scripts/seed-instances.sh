@@ -272,8 +272,16 @@ seed_instance() {
       if gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
           --config "$CONTROL_CONFIG" 2>/dev/null; then
         echo "      Export-data complete."
+        # A host without the game client exports successfully, but with a blank
+        # spritesheet. Say so here: nothing else reports it. /opt/factorio is the
+        # headless directory host-entrypoint.sh configures (docs/asset-export.md).
+        if timeout 25 gosu clusterio npx clusterioctl --log-level error host config list "$host_id" \
+            --config "$CONTROL_CONFIG" 2>/dev/null \
+            | grep -qE '^host\.factorio_directory[[:space:]]+"?/opt/factorio"?[[:space:]]*$'; then
+          echo "      NOTE: host $host_id has no game client — prototypes, locale and settings were exported, but every web-UI icon is blank. Install the client on this host, then run /scripts/regenerate-export-data.sh (docs/asset-export.md)."
+        fi
       else
-        echo "      Export-data failed (game client may not be installed on host $host_id)"
+        echo "      WARNING: export-data failed — check the log of host $host_id (docs/asset-export.md)"
       fi
       _EXPORT_DONE=true
     fi

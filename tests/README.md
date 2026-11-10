@@ -5,6 +5,7 @@ Fast regressions:
 ```sh
 bash tests/seed-instances-order.test.sh
 bash tests/seed-mod-versions.test.sh
+bash tests/regenerate-export-guard.test.sh
 node --test tests/*.test.cjs
 ```
 

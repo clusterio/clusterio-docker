@@ -88,6 +88,8 @@ docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-na
 host as headless when its `host.factorio_directory` is exactly `/opt/factorio`, the directory
 these images use when no client is installed. A host **not** built from these images that has
 the full game installed at that path is therefore refused too — pass `--allow-headless` for it.
+The reverse also holds: a client-less host whose Factorio directory is anywhere else (a
+non-default `FACTORIO_HOME`) is not recognised as headless, and the script exports from it.
 
 The raw `clusterioctl instance export-data` command and the web UI's export action are
 upstream Clusterio and have **no such guard** — on a headless host they overwrite silently.

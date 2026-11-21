@@ -23,7 +23,7 @@ ARG CLUSTERIO_VERSION=2.0.3
 # to pick up Debian/Node security patches:
 #   docker pull node:24-bookworm-slim && \
 #   docker image inspect node:24-bookworm-slim --format '{{index .RepoDigests 0}}'
-ARG NODE_IMAGE=node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 
 # ======================================================================
 # Base stage: OS dependencies, Factorio, and user setup (shared)

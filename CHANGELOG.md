@@ -34,8 +34,8 @@ Factorio versions when they change.
   for any headless export host (when `EXPORT_HOST` reaches the host's environment).
 - **CI runs the export-data test on every build.** The `Verify export-data` step was gated
   on Factorio account credentials that were never configured, so it had been skipped in
-  every run since it was added. It now runs headless: it asserts the refusal (exit `3`,
-  manifest and instance untouched), then exports with `--allow-headless` and checks the
+  every run since it was added. It now runs headless: it asserts the refusal (exit `3`
+  and the instance left running), then exports with `--allow-headless` and checks the
   manifest assets, the files under `/clusterio/static`, the prototype dump and the instance
   restart. With credentials set as repository secrets it instead requires an unrefused export
   with real icons. A stubbed gate test covers the client-host and fail-closed branches.
@@ -44,6 +44,38 @@ Factorio versions when they change.
 - Docs: `docs/asset-export.md` no longer says a headless export fails or that seeding retries
   the export 60 times (the seed-time export has been a single attempt since it was added).
   Clusterio `2.0.3`, unchanged.
+- **Base image refreshed**: `node:24-bookworm-slim` re-pinned to digest `dc26ae92…` (was
+  `ba849c60…`). Node `24.22.3` (from `24.20.0`), npm `11.19.1` (from `11.19.0`), Debian
+  `12.15` (unchanged). Picks up the Node and Debian package updates since the last pin.
+  Clusterio `2.0.3`, unchanged.
+- **Release builds pin `@clusterio/lib` to `CLUSTERIO_VERSION`** (fix). Upstream's packages
+  depend on it as `^2.0.3`, and the release install named only the role, `ctl` and the
+  plugins, so npm chose the newest 2.x: any `2.0.3` image built after Clusterio `2.1.0` was
+  published (2026-11-14) would have shipped `@clusterio/lib` `2.1.1` under `2.0.3` packages.
+  The published `2.0.3.r2` images predate that and are unaffected. `install-release.cjs` now
+  installs `@clusterio/lib` at the exact version and fails the build if any installed
+  `@clusterio/*` package, nested copies included, is not that version.
+- **CI no longer depends on the old `ghcr.io/solarcloud7` namespace.** The
+  configuration-upgrade acceptance case pulled its "previous release" host image from there
+  (`2.0.0-alpha.27.r7`); it now uses this organisation's `2.0.3.r2` host image by digest
+  (`PREVIOUS_HOST_IMAGE` in the workflow). The case therefore upgrades from `2.0.3` instead
+  of from the last alpha, so until the next Clusterio bump it is a same-version check and CI
+  no longer exercises the alpha.27 → 2.0 host-configuration path (last proven against `2.0.3`
+  on 2026-10-29, `tests/README.md`). Roll the digest forward on each Clusterio bump (now a
+  step in the release process). The old images stay published for consumers still pinned to them; CI
+  just no longer needs them.
+- CI: the fork that the dormant custom builds clone is named once (`CLUSTERIO_FORK_REPO`)
+  instead of four times, and the `test` job gets a 60-minute timeout and a read-only token.
+  `actions/checkout` and `actions/setup-node` move from `v6` to `v7` (what upstream Clusterio
+  uses); the other actions are already on their current major. No change to the images.
+- Docs: `SECURITY.md` removed, matching upstream `clusterio/clusterio`, which has none. Its
+  "report privately through GitHub" section pointed at a channel that does not exist here
+  (private vulnerability reporting is not enabled on this repository). Two operational facts
+  from it now sit in the Key Constraints table of `docs/consumer-integration.md`: every
+  container mounting `shared-tokens` can read the cluster-admin credential, and the token files
+  on that volume are written only on the controller's first run (`CLUSTERIO_HOST_TOKEN` takes
+  precedence over them). The longer rationale remains in git
+  history.
 
 ## 2026-11-06
 

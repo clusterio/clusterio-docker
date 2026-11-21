@@ -107,7 +107,8 @@ if run_case 0 STUB_FACTORIO_DIR=/opt/factorio-client -- TestInstance \
 else
   fail "client host was not exported"; dump
 fi
-if grep -qF "host config list 1" "$CALL_LOG"; then
+# Anchored: an unanchored match also accepts the instance id (1082479306, column 2).
+if grep -qE "host config list 1( |\$)" "$CALL_LOG"; then
   pass "the assigned host (column 3 of instance list) was the one queried"
 else
   fail "host config was not read for the assigned host"; dump

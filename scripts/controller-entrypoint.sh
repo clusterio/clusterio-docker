@@ -5,7 +5,7 @@ set -eo pipefail
 DATA_DIR="/clusterio/data"
 CONFIG_PATH="$DATA_DIR/config-controller.json"
 TOKENS_DIR="/clusterio/tokens"
-# Cluster-ADMIN ctl config shared with the hosts (SECURITY.md). The filename is this
+# Cluster-ADMIN ctl config shared with the hosts. The filename is this
 # image's token-exchange contract; its keys follow Clusterio 2.0 (ctl.*).
 CONTROL_CONFIG="$TOKENS_DIR/config-control.json"
 EXTERNAL_PLUGINS_DIR="/clusterio/external_plugins"

@@ -2,8 +2,12 @@
 # export-host-lib.sh — sourced by seed-instances.sh and regenerate-export-data.sh.
 #
 # The controller-side definition of "this host looks headless". An export from a host
-# without the Factorio game client succeeds with a blank spritesheet, so both scripts
-# need to tell which kind of host an export ran on, or is about to run on.
+# without the Factorio game client succeeds but exports no icons (only the host's log
+# says why), so both scripts need to tell which kind of host an export ran on, or is
+# about to run on.
+
+# The JSON helpers sit beside this file: /scripts in the image, scripts/ in the tests.
+SCRIPT_LIB_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 # The directory host-entrypoint.sh points host.factorio_directory at when the host has
 # no game client. KEEP IN SYNC with FACTORIO_HOME in Dockerfile.host — that ENV lives in
@@ -25,8 +29,8 @@ HEADLESS_FACTORIO_DIR="/opt/factorio"
 host_factorio_dir() {
   local config dir
   config=$(timeout 25 gosu clusterio npx clusterioctl --log-level error host config list "$1" \
-    --config "$2" 2>/dev/null) || return 1
-  dir=$(sed -nE 's/^host\.factorio_directory[[:space:]]+"?([^"]*)"?[[:space:]]*$/\1/p' <<<"$config" | head -1)
+    --output json --config "$2" 2>/dev/null) || return 1
+  dir=$(node "$SCRIPT_LIB_DIR/ctl-json.cjs" field host.factorio_directory <<<"$config" 2>/dev/null) || return 1
   [ -n "$dir" ] || return 1
   printf '%s\n' "$dir"
 }

@@ -14,10 +14,13 @@ Build the release selection you intend to test, then run one acceptance command:
 ```sh
 docker build -f Dockerfile.controller --build-arg CLUSTERIO_PLUGINS=none -t acceptance-controller .
 docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t acceptance-host .
-node tests/consumer-smoke.mjs acceptance-controller acceptance-host --previous-host ghcr.io/clusterio/clusterio-docker-host:2.0.3.r2
+node tests/consumer-smoke.mjs acceptance-controller acceptance-host \
+  --previous-host ghcr.io/clusterio/clusterio-docker-host:2.0.3.r2 \
+  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:2.0.3.r2
 ```
 
-The previous image must be available locally (pull it first when needed). CI pins its digest.
+The previous images must be available locally (pull them first when needed). CI pins their
+digests (`PREVIOUS_HOST_IMAGE`, `PREVIOUS_CONTROLLER_IMAGE`).
 Default expected plugins are `none`; pass `--plugins global_chat` for a selected image, or the
 explicit comma-separated six names for a full image. Use `--skip-package` for custom
 images: their pnpm workspace is not an npm installation target. The packaged-consumer case
@@ -25,30 +28,41 @@ runs on release selections separately. Ordinary CLI verification accepts an expl
 expected plugin array and checks shared package resolution; without an array it reports
 discovery without claiming selection coverage.
 
-Choose a single case with `--case NAME`. Omitting it runs every case:
+Choose a single case with `--case NAME`. Omitting it runs every case.
+
+Hosts the cases restart are stopped before they are replaced, and count as ready only when
+they are healthy **and** their own log contains `Started host`: the controller keeps a killed
+container's session as connected for up to 60 s, which would otherwise satisfy readiness.
+Real host tokens reach containers through the docker client's environment, not argv.
 
 | Case | Contract |
 |---|---|
-| lifecycle | Fresh boot, non-root hooks, recreation, persisted configuration/mods/assets/logs, served asset bytes |
+| lifecycle | Fresh boot, non-root hooks, recreation, persisted configuration/mods/assets/logs, served asset bytes; after both containers were killed and recreated, the host runs under the id its token file names (whether or not the controller had saved the hosts it created) |
 | shutdown | `docker stop` reaches the controller and host processes (graceful shutdown, no kill) and a controller setting changed just before the stop survives |
-| stale-lock | A killed host leaves a lock naming PID 1; recreated with no configuration writes before start, the host still starts and reconnects |
-| rotation | Explicit token wins over a stale mounted token; omitting the override restores file priority; unrelated configuration survives |
+| stale-lock | A killed host leaves a lock naming PID 1 (followed by the process start time); recreated with no configuration writes before start, the host logs `Removing stale host lock file(s) from a previous run`, starts and reconnects. Clusterio 2.1 also treats such a lock as stale by itself, so the case proves the entrypoint removes it, not that the removal is still needed |
+| rotation | An explicit token of another host (paired with the admin token) wins over the mounted token and decides the host id; omitting the override restores the file's token and id; unrelated configuration survives; a revoked host's token is rejected |
 | overrides | Explicit URL/port changes apply; omitted inputs preserve saved values |
-| saved-identity | A renamed container does not change saved identity or confuse readiness |
-| hook-identity | Final hook-written ID, matching credential and URL drive readiness |
-| zero-id | A fresh host named with suffix 01 registers as numeric ID 1 |
+| saved-identity | A container renamed to a name without a token file keeps its saved name, token and id, and readiness still passes |
+| hook-identity | A hook that sets another host's token and the id that token names, plus a URL, drives readiness; restoring both returns the original id |
+| zero-id | A fresh host named `…-01` takes its id from its token and the port range 34100-34199 from its name |
+| host-wipe | A host whose data volume is wiped comes back with the same id from its token file, is not registered as a new host, is connected, and its (save-less) instance stays assigned |
+| scale-out | Recreating the controller (stopped gracefully, as `docker compose up -d` does) with a raised `HOST_COUNT` issues the new host's token, keeps the existing tokens, and a second recreation does not register the host twice |
+| controller-wipe | After the controller data volume is wiped, a host started first logs that it is waiting for the controller; once the controller starts, the host logs `configuring the host again`, takes the re-issued token and its id, and keeps its saved name |
 | failures | A failed hook prevents server startup |
-| upgrade | Previous image's native CLI creates configuration on a fresh volume; candidate preserves settings and stored files |
+| upgrade | Previous image's native CLI creates configuration on a fresh volume; candidate preserves settings and stored files and takes the id from the token |
+| cluster-upgrade | A cluster created by the previous controller and host images restarts on the candidates: the host that had connected keeps its token, id 1 and assigned instance and is the only connected host; the host that never connected gets a new, accepted token |
 
 The all-cases run also invokes `native-host-config.cjs` inside the host image. It checks
 real CLI reads/writes, invalid numeric writes that return exit code zero, and unreadable
 configuration preservation. Settings are written individually; verification reads once
 after the batch. This is not an atomic configuration transaction.
 
-Missing `--previous-host` records upgrade as **unverified** and `coverageComplete: false`.
+Missing `--previous-host` records upgrade as **unverified**, and `cluster-upgrade` needs both
+`--previous-host` and `--previous-controller`; either gap sets `coverageComplete: false`.
 A passing run covers only its listed cases and build configuration. Tests use no game
-world or client download. Configuration upgrade acceptance does not certify database,
-save-format or disaster recovery.
+world or client download. `cluster-upgrade` starts the candidates on a controller database
+(hosts, instances), tokens and host configuration written by the previous images; it starts
+no instance. Saves, game data and disaster recovery remain uncovered.
 
 Reports and redacted, bounded logs are under `ci-artifacts/cd-smoke-*/`. Reports identify
 images, BUILD_INFO, harness hash, individual cases and cleanup. Each run owns labelled
@@ -63,7 +77,8 @@ The publication job builds its actual release/custom target, runs acceptance on 
 loaded full images, then pushes the same images without rebuilding. Existing seeded
 integration continues to cover Factorio instance startup.
 
-For a custom source test, use the existing canonical Clusterio checkout:
+For a custom source test, use the existing canonical Clusterio checkout (Clusterio `2.1.1` or
+newer: the entrypoints use the host pairing endpoint and `clusterioctl --output json`):
 
 ```sh
 python tools/build-custom-context.py ../clusterio --build
@@ -93,6 +108,8 @@ Local acceptance on 2026-09-10 (reports use UTC):
 | 2026-10-29: Clusterio 2.0.3 images at `b0c2cc1`, harness fixture runs `config create` first when the previous CLI supports it, `--case upgrade` with previous host alpha.27.r7 | `cd-smoke-f0d6b6e5-1d3` | Upgrade, packaged-plugin and native CLI checks passed; the fixture tolerates the pre-2.0 CLI's `Unknown argument: create` and lets `config set` create the file |
 | 2026-10-29: the same images and harness, `--case upgrade` with previous host `2.0.2.r1` | `cd-smoke-b82e8ad6-6a4` | Upgrade, packaged-plugin and native CLI checks passed: 2.0.2-written configuration survives candidate startup |
 | 2026-11-21: Clusterio 2.0.3 images built without cache from the working tree on `6e55181` (Node 24.22.3 base, `@clusterio/lib` pinned; every `@clusterio/*` package in both images read back as 2.0.3), six bundled plugins, previous host `2.0.3.r2` by digest | `cd-smoke-e1832200-78c` | All ten startup scenarios (incl. the `2.0.3.r2` → candidate upgrade case), native CLI plugin-selection and native configuration checks passed; run with `--skip-package`, as CI's publication acceptance is |
+| 2026-11-22: Clusterio 2.1.1 images built without cache from `f042149` (every `@clusterio/*` package in both images read back as 2.1.1, Node 24.22.3), six bundled plugins, previous controller and host `2.0.3.r2` by digest | `cd-smoke-26feab40-744` | All fourteen cases (incl. `host-wipe`, `scale-out`, `controller-wipe`, and `cluster-upgrade` from volumes written by the `2.0.3.r2` images), packaged-plugin, native CLI plugin-selection and native configuration checks passed |
+| 2026-11-22: the same commit built with `CLUSTERIO_PLUGINS=none` and with `global_chat`, no previous images, as CI's `consumer-smoke` job runs | `cd-smoke-7b21bd8e-641` (none), `cd-smoke-bcade6d7-c8c` (global_chat) | Both passed every case that needs no previous image; `upgrade` and `cluster-upgrade` recorded as unverified |
 
 Every listed run cleaned up its disposable resources. Assertions read native effective
 configuration independently of startup messages. The two final runs include configuration

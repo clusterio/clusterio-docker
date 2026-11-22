@@ -132,7 +132,7 @@ On **first run** (no `config-controller.json` exists) or if a previous first run
 4. If an `instance.json` is present, its configuration is applied (server settings, plugins, etc.) — **while the instance is still unassigned**, so the push cannot reach a host that has the instance mid-start
 5. The instance is assigned to that host, which delivers the finished config in a single push
 6. Any `.zip` files are uploaded as saves to that instance
-7. If `EXPORT_HOST` is set and matches the host ID, `export-data` runs once before starting the first instance on that host (requires game client)
+7. If `EXPORT_HOST` is set and matches the number N in the folder name `clusterio-host-N`, `export-data` runs once before starting the first instance on that host (requires game client)
 8. Instances are **started automatically** by default (override with `instance.auto_start: false` in `instance.json`)
 
 ## Host Folder Naming
@@ -145,7 +145,17 @@ The folder name **must exactly match** the container hostname:
 | `clusterio-host-2` | `seed-data/hosts/clusterio-host-2/` |
 | `my-custom-host-3` | `seed-data/hosts/my-custom-host-3/` |
 
-The host ID is extracted from the folder name (e.g., `clusterio-host-1` → ID `1`).
+The folder name is not a host id: since Clusterio 2.1 the controller assigns host ids. Seeding
+resolves each folder to the host it assigns instances to, in this order:
+
+1. the id the folder's token file (`/clusterio/tokens/<folder>.token`) was issued for, if that host is registered;
+2. the only registered host with that name;
+3. id N for `clusterio-host-N` (hosts of clusters set up before Clusterio 2.1).
+
+If none matches, seeding logs `ERROR: no registered host matches seed folder '…'` and skips
+that folder's instances. If the controller's host list cannot be read, it logs
+`ERROR: could not list the controller's hosts, so seed folder '…' has no host to go to` and
+skips them too. The number N in the folder name is still what `EXPORT_HOST` matches.
 
 ## Examples
 
@@ -206,9 +216,17 @@ docker exec clusterio-host-1 cat /clusterio/data/instances/MyInstance/instance.j
     "auto_pause": false
   },
   "global_chat.load_plugin": true,
-  "research_sync.load_plugin": false
+  "research_sync.load_plugin": false,
+  "subspace_storage.load_plugin": false
 }
 ```
+
+> **`subspace_storage`**: an instance that loads this plugin refuses to start unless its mod
+> pack contains the `subspace_storage` mod (>= `1.99.0`). Either set
+> `"subspace_storage.load_plugin": false` as above, or add `subspace_storage` and its
+> dependency `clusterio_lib` to the mod pack. `instance.json` applies only to instances
+> seeding creates; for an instance that already exists run
+> `docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json instance config set <instance> subspace_storage.load_plugin false`.
 
 > **`auto_pause` foot-gun**: a headless server with `auto_pause: true` (Factorio's default)
 > **pauses at 0 connected players** — which silently freezes every `on_tick`-driven plugin
@@ -288,7 +306,17 @@ All other fields (server settings, plugin toggles, factorio version, etc.) are a
 
 - Verify host folder name matches docker-compose hostname exactly
 - Check instance folder exists under the host folder
-- Check controller logs for errors
+- Check controller logs for errors. `ERROR: no registered host matches seed folder` means the
+  host has no token yet (is `HOST_COUNT` at least N?) or never registered; `ERROR: could not
+  list the controller's hosts` means the controller did not answer `host list`
+
+### Instance created but not started
+
+- `WARNING: instance '…' cannot start: its mod pack lacks mods a loaded plugin requires`,
+  followed by the controller's error: the instance loads `subspace_storage` without the
+  `subspace_storage` mod in its mod pack. See the note under
+  [Example instance.json](#example-instancejson)
+- `WARNING: instance '…' did not reach running within 120s`: check the host's logs
 
 ### Instance on wrong host
 

@@ -1,7 +1,7 @@
 # Clusterio Docker
 
 [![Docker Build](https://github.com/clusterio/clusterio-docker/actions/workflows/docker-build.yml/badge.svg)](https://github.com/clusterio/clusterio-docker/actions/workflows/docker-build.yml)
-[![Clusterio](https://img.shields.io/badge/clusterio-2.0.3-blue)](https://www.npmjs.com/package/@clusterio/controller)
+[![Clusterio](https://img.shields.io/badge/clusterio-2.1.1-blue)](https://www.npmjs.com/package/@clusterio/controller)
 [![Controller image](https://img.shields.io/badge/ghcr.io-controller-24292f?logo=github)](https://github.com/clusterio/clusterio-docker/pkgs/container/clusterio-docker-controller)
 [![Host image](https://img.shields.io/badge/ghcr.io-host-24292f?logo=github)](https://github.com/clusterio/clusterio-docker/pkgs/container/clusterio-docker-host)
 
@@ -59,15 +59,15 @@ for reproducibility:
 
 | Tag | Meaning | Mutability |
 |-----|---------|------------|
-| `:2.0.3.r2` | Clusterio version **+** docker revision | **immutable pin — pin this** |
-| `:2.0.3` | bundled Clusterio version (`main` builds) | moves as the docker layer rebuilds |
+| `:2.1.1.r1` | Clusterio version **+** docker revision | **immutable pin — pin this** |
+| `:2.1.1` | bundled Clusterio version (`main` builds) | moves as the docker layer rebuilds |
 | `:latest` | newest `main` build | moves |
 | `:main` | newest `main` build (alias of `:latest`) | moves |
 
 `.rN` (dot, not hyphen — a hyphen would make `27-r1` a single alphanumeric SemVer prerelease
 identifier, which SemVer-aware tooling ranks above any purely-numeric identifier like `28`,
 so `2.0.0-alpha.27-r1` would sort as newer than `2.0.0-alpha.28`) resets to `r1` on each
-Clusterio bump; you cut a `2.0.3.rN` git tag to mint an
+Clusterio bump; you cut a `2.1.1.rN` git tag to mint an
 immutable pin. `main` also publishes a convenience pair tag `:main-clusterio-<version>` (moves per
 rebuild). Custom/fork lines (see Branch model) publish under their branch name instead, e.g.
 `:factorio-2.2` + `:factorio-2.2-clusterio-<version>`.
@@ -162,6 +162,7 @@ docker run -d \
   -v controller-data:/clusterio/data \
   -v shared-tokens:/clusterio/tokens \
   -e INIT_CLUSTERIO_ADMIN=your_username \
+  -e HOST_COUNT=1 \
   ghcr.io/clusterio/clusterio-docker-controller
 ```
 
@@ -173,7 +174,7 @@ docker run -d \
   -p 34100-34199:34100-34199/udp \
   -v host-data:/clusterio/data \
   -v shared-tokens:/clusterio/tokens:ro \
-  -e CLUSTERIO_HOST_TOKEN=your_host_token \
+  -e HOST_NAME=clusterio-host-1 \
   -e CONTROLLER_URL=http://your-controller:8080/ \
   ghcr.io/clusterio/clusterio-docker-host
 ```
@@ -187,7 +188,7 @@ Each container uses a single data volume for all persistent storage:
 | Container | Volume Mount | Contents |
 |-----------|--------------|----------|
 | Controller | `/clusterio/data` | Config, database, mods, logs |
-| Controller | `/clusterio/tokens` | Generated host tokens (shared) |
+| Controller | `/clusterio/tokens` | Admin ctl config and the host tokens the controller issues (shared) |
 | Controller | `/clusterio/seed-data` | Seed data for first run (read-only bind mount) |
 | Host | `/clusterio/data` | Config, instances, mods, logs |
 | Host | `/clusterio/tokens` | Token from controller (read-only) |
@@ -220,13 +221,14 @@ docker run -d -p 8080:8080 \
   -v ./data/controller:/clusterio/data \
   -v ./tokens:/clusterio/tokens \
   -e INIT_CLUSTERIO_ADMIN=admin \
+  -e HOST_COUNT=1 \
   ghcr.io/clusterio/clusterio-docker-controller
 
 # Host  
 docker run -d -p 34100-34199:34100-34199/udp \
   -v ./data/host:/clusterio/data \
   -v ./tokens:/clusterio/tokens:ro \
-  -e CLUSTERIO_HOST_TOKEN=your_token \
+  -e HOST_NAME=clusterio-host-1 \
   ghcr.io/clusterio/clusterio-docker-host
 ```
 
@@ -241,28 +243,30 @@ docker run -d -p 34100-34199:34100-34199/udp \
 | `INIT_CLUSTERIO_ADMIN` | *(required)* | Admin username for first run |
 | `CONTROLLER_HTTP_PORT` | `8080` | Web UI / API port |
 | `CONTROLLER_PUBLIC_ADDRESS` | *(unset)* | Public URL for external access (sets `controller.public_url`; standalone usage) |
-| `HOST_COUNT` | `0` (standalone) / `2` (compose) | Number of host tokens to generate |
+| `HOST_COUNT` | `0` (standalone) / `2` (compose) | Number of hosts (`clusterio-host-1..N`) the controller issues a token for, checked on every start; seeding waits for that many hosts |
 | `DEFAULT_MOD_PACK` | `Base Game 2.1` (standalone) / `Space Age 2.1` (compose) | Default mod pack for new instances (first run only). Created automatically if not found. |
 | `DEFAULT_FACTORIO_VERSION` | `2.1` | Factorio version used when creating a new mod pack (only applies when `DEFAULT_MOD_PACK` doesn't match an existing pack) |
 | `FACTORIO_USERNAME` | *(unset)* | Factorio account username (for mod portal & multiplayer) |
 | `FACTORIO_TOKEN` | *(unset)* | Factorio account token from [factorio.com/profile](https://factorio.com/profile) |
-| `EXPORT_HOST` | `1` (compose) / `0` (skip) | Host ID whose instance runs `export-data` (web-UI icons/prototypes) during first-run seeding — that host needs the game client for icons (a headless host exports with blank icons). See [Asset Export](docs/asset-export.md). |
+| `EXPORT_HOST` | `1` (compose) / `0` (skip) | Number N of the host `clusterio-host-N` (not its host id) whose instance runs `export-data` (web-UI icons/prototypes) during first-run seeding — that host needs the game client for icons (a headless host exports no icons). See [Asset Export](docs/asset-export.md). |
 | `CONTROLLER_STATIC_CACHE_MODE` | `revalidate` | `/static` cache headers: `revalidate` (default — non-hashed web-UI assets stay fresh across upgrades) or `immutable` (stock Clusterio behavior) |
 | `CLUSTERIO_LOG_TO_STDOUT` | `true` | Mirror the on-disk cluster/host logs (plugin logger output) to container stdout with a `[cluster-log]` prefix |
+| `CLUSTERIO_LOG_RETENTION_DAYS` | *(unset: Clusterio's `30`)* | Delete controller log files older than this many days. Written to `controller.log_retention_days` before start on every boot when set. Whole number; `0` keeps logs forever; an invalid value stops the container |
 
 ### Host
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLUSTERIO_HOST_TOKEN` | *(auto from shared volume)* | Explicit token overrides mounted/saved credentials on every boot |
+| `CLUSTERIO_HOST_TOKEN` | *(auto from shared volume)* | Explicit token overrides mounted/saved credentials on every boot and decides the host id. A token the controller rejects stops the container |
 | `CONTROLLER_URL` | `http://clusterio-controller:8080/` on fresh hosts | Explicit override; omission preserves a saved endpoint |
-| `HOST_NAME` | Container hostname | Host identifier (must match token file name) |
+| `HOST_NAME` | Container hostname | Host name; `clusterio-host-N` reads the token file `clusterio-host-N.token`, and N picks the default port range |
+| `CLUSTERIO_LOG_RETENTION_DAYS` | *(unset: Clusterio's `30`)* | As on the controller, written to `host.log_retention_days` |
 | `FACTORIO_USERNAME` | *(unset)* | Factorio.com username — triggers runtime game client download on first startup |
 | `FACTORIO_TOKEN` | *(unset)* | Factorio.com token from [factorio.com/profile](https://factorio.com/profile) |
 | `FACTORIO_CLIENT_BUILD` | `expansion` | Runtime client variant: `expansion` (Space Age) or `alpha` (base game) |
 | `FACTORIO_CLIENT_TAG` | `stable` | Factorio client version tag for runtime download |
 | `SKIP_CLIENT` | `false` | Force headless server even when the game client is available |
-| `FACTORIO_PORT_RANGE` | Auto from host ID | Override the auto-derived game port range (e.g., `34100-34199`) |
+| `FACTORIO_PORT_RANGE` | Auto from the name's number N: `34000 + N × 100` to `+99` (N=1 → `34100-34199`, N=10 → `35000-35099`) | Override the auto-derived game port range (e.g., `34100-34199`) |
 
 ### Build Arguments
 
@@ -271,7 +275,7 @@ These are set at build time via `docker compose build` or `--build-arg`. In dock
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CLUSTERIO_TARGET` | `release` | `release` (npm packages) or `custom` (build from the bundled `clusterio/` source) |
-| `CLUSTERIO_VERSION` | `2.0.3` | Pinned Clusterio version for the `release` target — all `@clusterio/*` packages install at this version. Ignored by `custom`. |
+| `CLUSTERIO_VERSION` | `2.1.1` | Pinned Clusterio version for the `release` target — all `@clusterio/*` packages install at this version. Ignored by `custom`. |
 | `NODE_IMAGE` | `node:24-bookworm-slim@sha256:…` | Base Node image, pinned by digest for reproducible builds |
 | `BAKE_FACTORIO_HEADLESS` | `false` | Bake Factorio headless into the image. **Default `false`** — images ship no Factorio (Wube's EULA forbids redistributing it); Clusterio downloads it at runtime. Set `true` only for private/offline images. |
 | `FACTORIO_HEADLESS_TAG` | `stable` | Factorio headless version to bake (only used when `BAKE_FACTORIO_HEADLESS=true`) |
@@ -300,43 +304,98 @@ These are set at build time via `docker compose build` or `--build-arg`. In dock
 
 ## Getting Host Tokens
 
+A host from these images starts only with a token the controller accepts (a controller older
+than Clusterio 2.1, which cannot be asked, is the exception). Every time the controller
+starts, once it answers HTTP, it checks the hosts `clusterio-host-1` to
+`clusterio-host-<HOST_COUNT>`. A token file the controller still accepts is kept. A missing or
+rejected one is replaced: the controller creates the host through Clusterio's host pairing
+endpoint and writes its token to the shared volume. Raising `HOST_COUNT` and recreating the
+controller (`docker compose up -d`) adds hosts; lowering it revokes nothing.
+
 ### Option 1: Shared Volume (Docker Compose)
 
-When using docker-compose, the controller automatically generates tokens based on `HOST_COUNT` and saves them to a shared volume. Hosts read tokens from this volume automatically.
-
-**Important:** For auto-token loading to work, hosts must be named `clusterio-host-N` where N matches the host ID:
+Hosts that mount the shared tokens volume read their token file automatically. They must be
+named `clusterio-host-N`, with N from 1 to `HOST_COUNT`:
 
 | Host Name | Token File | Host ID |
 |-----------|------------|---------|
-| `clusterio-host-1` | `clusterio-host-1.token` | 1 |
-| `clusterio-host-2` | `clusterio-host-2.token` | 2 |
-| `clusterio-host-3` | `clusterio-host-3.token` | 3 |
+| `clusterio-host-1` | `clusterio-host-1.token` | assigned by the controller |
+| `clusterio-host-2` | `clusterio-host-2.token` | assigned by the controller |
+| `clusterio-host-3` | `clusterio-host-3.token` | assigned by the controller |
 
-The host extracts its numeric ID from its name (e.g., `clusterio-host-1` → ID `1`).
+The host id is not N. On a new cluster the controller picks it at random (e.g. `1603504663`);
+hosts of a cluster upgraded from 2.0.3 keep the ids they had. The host takes `host.id` from its
+token on every boot. N picks the token file, the default port range (`34N00-34N99`), the seed
+folder and the `EXPORT_HOST` match. Look up ids with:
 
-### Option 2: Manual Token (Standalone)
+```bash
+docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json host list --output json
+```
 
-For standalone containers or custom host names:
+Token files appear once the controller is up. A host waits for its file (300 s on first boot),
+then asks the controller whether it accepts the token before starting. `docker stop` during
+these waits ends the container at once (`Stopped before the host started`).
 
-1. Start the controller
-2. Generate a token via CLI:
+The controller recognises a host by its token file first and only then by the name
+`clusterio-host-N`. A host whose `host.name` was changed and whose token file is lost is not
+recognised: the controller issues a token for a new host of that name, and the old host's
+instances stay assigned to the old id. A wiped host data volume is recognised (same id from
+the token file, instances stay assigned), but the instances' saves and files were on that
+volume and are gone.
+
+### Option 2: Explicit Token (Remote Host)
+
+For a host that does not mount the shared tokens volume:
+
+1. Raise `HOST_COUNT` on the controller to cover the host and recreate the controller.
+2. Read the token the controller issued:
    ```bash
-   docker exec clusterio-controller npx clusteriocontroller bootstrap generate-host-token 1
+   docker exec clusterio-controller cat /clusterio/tokens/clusterio-host-3.token
    ```
-3. Pass the token to host via `CLUSTERIO_HOST_TOKEN` environment variable:
+3. Pass it to the host with `CLUSTERIO_HOST_TOKEN`. It takes precedence over any token file
+   and decides the host id:
    ```bash
    docker run -d \
      -v host-data:/clusterio/data \
-     -e CLUSTERIO_HOST_TOKEN=eyJhbGci... \
+     -e HOST_NAME=clusterio-host-3 \
+     -e CLUSTERIO_HOST_TOKEN=<token> \
      -e CONTROLLER_URL=http://your-controller:8080/ \
      ghcr.io/clusterio/clusterio-docker-host
    ```
 
-### Option 3: Web UI
+A host whose `CLUSTERIO_HOST_TOKEN` the controller rejects exits at once.
 
-1. Log into the controller web UI
-2. Navigate to Hosts → Create Host Token
-3. Use the generated token
+### Removed in Clusterio 2.1
+
+`clusterioctl host generate-token`, `host revoke-token`, `host create-config`,
+`clusteriocontroller bootstrap generate-host-token` and the "Generate Token" button on the web
+UI's Hosts page no longer exist. A token cannot be rotated in place: `clusterioctl host revoke
+<host>` deletes the host and unassigns its instances, and the next controller start issues a
+new token under a new id. Upstream's join requests (`clusterioctl host pending`,
+`approve <code>`, `reject <code>`) apply to hosts that start without a token; hosts from these
+images do not.
+
+If the controller logs `WARNING: clusterio-host-N is registered (host id …) but its token
+file is missing` (or "the controller rejects its token file"), it issues nothing for that
+name. To issue a new token:
+
+1. Revoke the host (this unassigns its instances):
+   ```bash
+   docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json host revoke clusterio-host-N
+   ```
+2. Restart the controller (`docker restart clusterio-controller`). It issues a token under a
+   new host id. A host waiting on a rejected token picks up the new file; one that has
+   already exited picks it up when it next starts.
+3. Once the host has reconnected, assign each of its instances again, using the new id from
+   `host list --output json`:
+   ```bash
+   docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json instance assign <instance> <host id>
+   ```
+
+The controller saves its database every 60 s and on a graceful stop. A controller killed
+within 60 s of creating hosts (first start, or after raising `HOST_COUNT`) loses them, with
+anything else done in that window; on its next start it issues new tokens under new ids and
+the hosts follow.
 
 ---
 
@@ -378,6 +437,10 @@ Hosts pre-cache mods locally from the seed-data mount on every startup for faste
 > plugin's lines. Opt out with `CLUSTERIO_LOG_TO_STDOUT=false`. The raw files remain at
 > `/clusterio/logs/cluster/` (controller) and `/clusterio/logs/host/` (hosts); engine/module
 > Lua output stays in the instance's `factorio-current.log`.
+
+> **Log retention.** Clusterio deletes controller and host log files older than 30 days, at
+> start and hourly. Set `CLUSTERIO_LOG_RETENTION_DAYS` on the controller and each host to
+> change that (`0` keeps logs forever).
 
 ### Dozzle
 
@@ -476,6 +539,25 @@ Both images include these official plugins:
 - `statistics_exporter` - Prometheus metrics
 - `subspace_storage` - Shared item storage
 
+> **`subspace_storage` needs its mod.** An instance that loads the plugin refuses to start
+> unless its mod pack contains the `subspace_storage` mod (>= `1.99.0`): `Plugin
+> subspace_storage requires subspace_storage >= 1.99.0 (missing)`. Ways out (`ctl` =
+> `docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json`):
+>
+> - Add the mod and its dependency `clusterio_lib` to the mod pack. A controller with Factorio
+>   credentials downloads both zips at start, for the default mod pack's Factorio version,
+>   into its mod store, and adds them to no pack. `FACTORIO_USERNAME` / `FACTORIO_TOKEN` reach
+>   the controller's config only on its first run; on an existing cluster run
+>   `ctl controller config set controller.factorio_username <name>` and
+>   `ctl controller config set controller.factorio_token <token>`.
+> - Stop an existing instance loading the plugin:
+>   `ctl instance config set <instance> subspace_storage.load_plugin false`. For instances
+>   seeding creates, put `"subspace_storage.load_plugin": false` in `instance.json`; it does
+>   not reach instances that already exist.
+> - Controller-wide: `ctl controller config set subspace_storage.load_plugin false`, then
+>   restart the controller.
+> - Build with a `CLUSTERIO_PLUGINS` selection without it.
+
 ---
 
 ## External Plugins
@@ -494,6 +576,13 @@ To use external Clusterio plugins, mount a plugins directory into the containers
 > plugin only registers if its `plugin` export is detectable from the source
 > (`module.exports = { plugin }`). See upstream's
 > [2.0 migration guide](https://github.com/clusterio/clusterio/blob/v2.0.1/docs/devs/plugin-migration-to-2.0.md).
+
+> **Clusterio 2.1 web modules are built with Vite** (`clusterioPlugin` from
+> `@clusterio/web_ui/vite.mjs`). A plugin whose web module was built with webpack still loads
+> its controller, host and instance code, but its web UI is rejected ("Incompatible
+> dist/web/manifest.json, the plugin must be rebuilt with Vite"). Mount plugins with a web
+> module prebuilt: the release images do not contain `vite`. Upstream's `docs/devs/plugin-migration-to-2.1.md`
+> also covers the new request error classes and renamed `lib` functions.
 
 > **Developing a plugin?** See the [Plugin Development guide](docs/plugin-development.md) —
 > dev loop, the require-cache and boot-race traps, log locations, and a worked example.
@@ -586,8 +675,21 @@ sudo chown -R 1000:1000 ./data/host
 
 1. Ensure controller is healthy: `docker compose ps`
 2. Check controller logs: `docker logs clusterio-controller`
-3. Verify `CONTROLLER_URL` is correct (use Docker network name, not localhost)
-4. Check token is valid
+3. Verify `CONTROLLER_URL` is correct (use Docker network name, not localhost). A host that
+   gets no answer from the controller, or a 5xx/429 answer (e.g. from a reverse proxy in front
+   of a stopped controller), logs `Waiting for the controller to answer before starting the host...`
+   and keeps waiting without starting. A URL that is not `http(s)://…` stops the container
+   with `Invalid effective host.controller_url`.
+4. Check the token is accepted. A host whose token the controller rejects logs
+   `The controller rejects this host's token`, waits up to 300 s in total for a new token
+   file, then exits; with `CLUSTERIO_HOST_TOKEN` it exits at once. The controller issues token files
+   for `clusterio-host-1..HOST_COUNT` when it starts — see
+   [Getting Host Tokens](#getting-host-tokens).
+
+### Instance does not start: mod pack lacks required mods
+
+The `subspace_storage` plugin needs its mod in the instance's mod pack — see
+[Included Plugins](#included-plugins).
 
 ### Container Keeps Restarting
 

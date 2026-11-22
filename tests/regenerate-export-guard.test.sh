@@ -2,12 +2,12 @@
 # regenerate-export-guard.test.sh
 #
 # Asserts scripts/regenerate-export-data.sh refuses to export from a headless host
-# (which would replace the mod pack's export manifest with blank icons) unless
+# (which would replace the mod pack's export manifest with one that has no icons) unless
 # --allow-headless is given, that a refusal issues no mutating clusterioctl call, and
 # that "host is headless" (exit 3) stays distinguishable from "could not tell" (exit 4).
 # `npx`, `gosu` and `sleep` are shimmed onto PATH and every clusterioctl call is recorded.
 #
-# requires: bash, coreutils (timeout)
+# requires: bash, node (the script parses clusterioctl's JSON with it), coreutils (timeout)
 # produces: exit 0 when every case holds, exit 1 with the call log dumped
 # does not: run Docker, a cluster, or any real clusterioctl — it checks which calls
 #           the script issues for a given host answer, not what Clusterio does with
@@ -41,9 +41,11 @@ exit 0
 SH
 
 # clusterioctl stand-in. Records every invocation and answers the two lookups in
-# clusterioctl's real output shapes (`instance list`: name in column 1, assigned
-# host in column 3, no leading pipe; `host config list`: `field "json-value"`).
-#   STUB_ASSIGNED_HOST   assignedHost cell for TestInstance (may be empty)
+# clusterioctl 2.1's `--output json` shapes (`instance list`: an array of instances,
+# `assignedHost` absent when unassigned; `host config list`: one flat object). Without
+# `--output json` a lookup gets a table, which the script's JSON parsing rejects.
+# Commands with no result print what clusterioctl prints for them.
+#   STUB_ASSIGNED_HOST   assignedHost of TestInstance (empty = unassigned)
 #   STUB_FACTORIO_DIR    host.factorio_directory the host reports
 #   STUB_HOST_CONFIG_RC  exit status of `host config list` (non-zero = host unreachable)
 cat > "$WORK/bin/npx" <<'SH'
@@ -54,18 +56,30 @@ fi
 shift
 printf '%s\n' "$*" >> "$CALL_LOG"
 
+json=false
+case " $* " in *" --output json "*) json=true ;; esac
+case "$*" in
+  *"instance list"*|*"host config list"*)
+    if [ "$json" != "true" ]; then
+      echo "name         | id         | assignedHost"
+      exit 0
+    fi
+    ;;
+esac
 case "$*" in
   *"instance list"*)
-    echo "name         | id         | assignedHost | gamePort | status  | factorioVersion"
-    echo "------------------------------------------------------------------------------"
-    printf '%-12s | %-10s | %-12s | %-8s | %-7s | %s\n' TestInstance 1082479306 "${STUB_ASSIGNED_HOST-1}" 34100 running 2.1.8
-    printf '%-12s | %-10s | %-12s | %-8s | %-7s | %s\n' OtherInst 643100222 2 34200 running 2.1.8
+    assigned=""
+    [ -z "${STUB_ASSIGNED_HOST-933475968}" ] || assigned="\"assignedHost\":${STUB_ASSIGNED_HOST-933475968},\"gamePort\":34100,"
+    printf '[{"name":"TestInstance","id":1082479306,%s"status":"running","factorioVersion":"2.1.8"},' "$assigned"
+    printf '{"name":"OtherInst","id":643100222,"assignedHost":2,"gamePort":34200,"status":"running","factorioVersion":"2.1.8"}]\n'
     ;;
   *"host config list"*)
     [ "${STUB_HOST_CONFIG_RC:-0}" = "0" ] || exit "${STUB_HOST_CONFIG_RC}"
-    echo 'host.name "clusterio-host-1"'
-    echo "host.factorio_directory \"${STUB_FACTORIO_DIR}\""
-    echo 'host.instances_directory "/clusterio/data/instances"'
+    printf '{"host.name":"clusterio-host-1","host.id":933475968,"host.factorio_directory":"%s","host.instances_directory":"/clusterio/data/instances"}\n' \
+      "${STUB_FACTORIO_DIR}"
+    ;;
+  *)
+    if [ "$json" = "true" ]; then echo '{"success":true}'; else echo "Command ran successfully"; fi
     ;;
 esac
 exit 0
@@ -107,9 +121,8 @@ if run_case 0 STUB_FACTORIO_DIR=/opt/factorio-client -- TestInstance \
 else
   fail "client host was not exported"; dump
 fi
-# Anchored: an unanchored match also accepts the instance id (1082479306, column 2).
-if grep -qE "host config list 1( |\$)" "$CALL_LOG"; then
-  pass "the assigned host (column 3 of instance list) was the one queried"
+if grep -qE "host config list 933475968( |\$)" "$CALL_LOG"; then
+  pass "the assigned host (assignedHost of the instance) was the one queried"
 else
   fail "host config was not read for the assigned host"; dump
 fi

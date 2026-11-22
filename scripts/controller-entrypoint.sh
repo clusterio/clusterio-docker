@@ -10,6 +10,9 @@ TOKENS_DIR="/clusterio/tokens"
 CONTROL_CONFIG="$TOKENS_DIR/config-control.json"
 EXTERNAL_PLUGINS_DIR="/clusterio/external_plugins"
 SEED_DATA_DIR="/clusterio/seed-data"
+# Number of hosts named clusterio-host-1..N that get a token on the shared volume and that
+# seeding waits for. 0 for a controller whose hosts are approved by hand.
+HOST_COUNT=${HOST_COUNT:-0}
 
 # Create data directory and fix permissions
 mkdir -p "$DATA_DIR" "$TOKENS_DIR"
@@ -115,22 +118,22 @@ if [ ! -f "$CONFIG_PATH" ]; then
   gosu clusterio npx clusterioctl --log-level error config set ctl.controller_url "http://localhost:${CONTROLLER_HTTP_PORT:-8080}/" --config "$CONTROL_CONFIG"
   chown clusterio:clusterio "$CONTROL_CONFIG"
   chmod 600 "$CONTROL_CONFIG"
-  
-  # Generate host tokens if HOST_COUNT is set (default: 0 for standalone usage)
-  HOST_COUNT=${HOST_COUNT:-0}
-  if [ "$HOST_COUNT" -gt 0 ]; then
-    echo "Generating tokens for $HOST_COUNT host(s)..."
-    
-    for HOST_ID in $(seq 1 $HOST_COUNT); do
-      HOST_TOKEN_FILE="$TOKENS_DIR/clusterio-host-${HOST_ID}.token"
-      gosu clusterio npx clusteriocontroller --log-level error bootstrap generate-host-token "$HOST_ID" --config "$CONFIG_PATH" > "$HOST_TOKEN_FILE"
-      # The redirect above is performed by THIS shell (root), not by gosu, so the
-      # file lands root-owned regardless of the gosu on the command. Hosts read it
-      # as clusterio (uid 1001), so chown before tightening or they lock out.
-      chown clusterio:clusterio "$HOST_TOKEN_FILE"
-      chmod 600 "$HOST_TOKEN_FILE"
-      echo "  Token generated: clusterio-host-${HOST_ID}.token"
-    done
+fi
+
+# Log retention (Clusterio 2.1). Log files older than controller.log_retention_days
+# (30 unless set) are deleted when the controller starts, and hourly after that — the first
+# start after an upgrade from 2.0 included. So this must be written before `run`, and a
+# value that cannot be applied stops the start: carrying on would delete the logs.
+if [ -n "${CLUSTERIO_LOG_RETENTION_DAYS:-}" ]; then
+  if ! [[ "$CLUSTERIO_LOG_RETENTION_DAYS" =~ ^[0-9]{1,5}$ ]]; then
+    echo "ERROR: CLUSTERIO_LOG_RETENTION_DAYS must be a whole number of days (0 keeps logs forever), got '$CLUSTERIO_LOG_RETENTION_DAYS'" >&2
+    exit 1
+  fi
+  gosu clusterio npx clusteriocontroller --log-level error config set controller.log_retention_days "$CLUSTERIO_LOG_RETENTION_DAYS" --config "$CONFIG_PATH"
+  APPLIED_RETENTION=$(gosu clusterio npx clusteriocontroller --log-level error config show controller.log_retention_days --config "$CONFIG_PATH")
+  if [ "$APPLIED_RETENTION" != "$((10#$CLUSTERIO_LOG_RETENTION_DAYS))" ]; then
+    echo "ERROR: could not set controller.log_retention_days to $CLUSTERIO_LOG_RETENTION_DAYS (it reads back as '$APPLIED_RETENTION')" >&2
+    exit 1
   fi
 fi
 
@@ -175,6 +178,18 @@ until curl -sf http://localhost:${CONTROLLER_HTTP_PORT:-8080}/ > /dev/null 2>&1;
 done
 echo "Controller is ready"
 
+# Host tokens (Clusterio 2.1). The controller no longer signs a token for a host that does
+# not exist yet, so each expected host is created through the running controller's host
+# pairing endpoint and its token written to the shared volume. Every start, gaps only:
+# raising HOST_COUNT issues the new host's token on the next start, and a token the
+# controller still accepts is never replaced. Hosts wait for their file.
+# Not fatal: a failure here leaves the affected hosts waiting, not the controller dead.
+if [ "$HOST_COUNT" -gt 0 ]; then
+  echo "Checking tokens for $HOST_COUNT host(s)..."
+  gosu clusterio node /scripts/provision-hosts.cjs "$CONTROL_CONFIG" "$TOKENS_DIR" "$HOST_COUNT" \
+    || echo "ERROR: not every host has a token — the hosts named above cannot join until the next controller start succeeds in issuing one" >&2
+fi
+
 # On first run, seed data via API (requires running controller)
 # Also re-attempt if a previous first run was interrupted (marker not written)
 SEED_MARKER="$DATA_DIR/.seed-complete"
@@ -182,9 +197,9 @@ SEED_MARKER="$DATA_DIR/.seed-complete"
 # Resolve default mod pack ID (used by both first-run seeding and ongoing mod uploads)
 DEFAULT_MOD_PACK="${DEFAULT_MOD_PACK:-Base Game 2.1}"
 DEFAULT_FACTORIO_VERSION="${DEFAULT_FACTORIO_VERSION:-2.1}"
-MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack list \
+MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack list --output json \
   --config "$CONTROL_CONFIG" 2>/dev/null \
-  | grep "$DEFAULT_MOD_PACK" | awk -F'|' '{print $1}' | tr -d ' ' || true)
+  | node /scripts/ctl-json.cjs mod-pack-id "$DEFAULT_MOD_PACK" 2>/dev/null || true)
 
 # If the requested mod pack doesn't exist, create it — but only during the
 # seeding window (first run, or seeding not yet complete). This prevents a
@@ -192,13 +207,15 @@ MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack list \
 # empty) from creating a duplicate pack.
 if [ -z "$MOD_PACK_ID" ] && { [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]; }; then
   echo "Mod pack '$DEFAULT_MOD_PACK' not found — creating it (Factorio $DEFAULT_FACTORIO_VERSION)..."
-  CREATE_OUTPUT=$(gosu clusterio npx clusterioctl --log-level error mod-pack create \
-    "$DEFAULT_MOD_PACK" "$DEFAULT_FACTORIO_VERSION" \
-    --config "$CONTROL_CONFIG" 2>/dev/null)
-  echo "  $CREATE_OUTPUT"
-  # Parse ID from output: "Created mod pack <name> (<id>)"
-  MOD_PACK_ID=$(echo "$CREATE_OUTPUT" | grep -oE '\([0-9]+\)' | tr -d '()' || true)
-  if [ -z "$MOD_PACK_ID" ]; then
+  # Answers {"id":…,"name":…}. A failure must not stop the controller (set -e): the
+  # warning below and the one at "Setting default mod pack" report it.
+  MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack create \
+    "$DEFAULT_MOD_PACK" "$DEFAULT_FACTORIO_VERSION" --output json \
+    --config "$CONTROL_CONFIG" 2>/dev/null \
+    | node /scripts/ctl-json.cjs field id 2>/dev/null || true)
+  if [ -n "$MOD_PACK_ID" ]; then
+    echo "  Created mod pack '$DEFAULT_MOD_PACK' (ID: $MOD_PACK_ID)"
+  else
     echo "  WARNING: Failed to create mod pack '$DEFAULT_MOD_PACK'"
   fi
 
@@ -216,7 +233,7 @@ if [ -z "$MOD_PACK_ID" ] && { [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]
     # this and the container restart-looped until compose gave up.)
     gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
       --enable-mods space-age elevated-rails quality recycler \
-      --config "$CONTROL_CONFIG" 2>/dev/null \
+      --config "$CONTROL_CONFIG" >/dev/null 2>&1 \
       || echo "  WARNING: enabling DLC mods failed (core too old for one of them?) — pack '$DEFAULT_MOD_PACK' may need manual mod-pack edit" >&2
   fi
 fi
@@ -227,7 +244,7 @@ if [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]; then
   if [ -n "$MOD_PACK_ID" ]; then
     gosu clusterio npx clusterioctl --log-level error controller config set \
       controller.default_mod_pack_id "$MOD_PACK_ID" \
-      --config "$CONTROL_CONFIG" 2>/dev/null
+      --config "$CONTROL_CONFIG" >/dev/null 2>&1
     echo "  Default mod pack set (ID: $MOD_PACK_ID)"
   else
     echo "  WARNING: Mod pack '$DEFAULT_MOD_PACK' not found — set manually in Web UI"

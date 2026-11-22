@@ -43,7 +43,7 @@ for mod_file in "${MOD_FILES[@]}"; do
   mod_filename=$(basename "$mod_file" .zip)
   echo "  Uploading: ${mod_filename}.zip"
   gosu clusterio npx clusterioctl --log-level error mod upload "$mod_file" \
-    --config "$CONTROL_CONFIG" 2>/dev/null || {
+    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || {
       echo "    WARNING: Failed to upload ${mod_filename}.zip (may already exist)"
     }
 
@@ -74,7 +74,7 @@ if [ -n "$MOD_PACK_ID" ] && [ ${#MODS_TO_ADD[@]} -gt 0 ]; then
   echo "Adding ${#MODS_TO_ADD[@]} mod(s) to mod pack $MOD_PACK_ID..."
   gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
     --add-mods "${MODS_TO_ADD[@]}" \
-    --config "$CONTROL_CONFIG" 2>/dev/null || {
+    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || {
       echo "  WARNING: Failed to add mods to mod pack (may already be added)"
     }
   echo "  Mods added: ${MODS_TO_ADD[*]}"

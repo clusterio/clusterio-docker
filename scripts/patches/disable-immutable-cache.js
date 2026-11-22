@@ -2,9 +2,11 @@
 //
 // The Clusterio controller serves everything under /static with
 // `Cache-Control: immutable, max-age=1y` (Controller.js). `immutable` is only safe
-// for content-hashed filenames, but plugin webpack builds commonly emit FIXED chunk
-// names, and the Module-Federation entry/manifest are fixed by necessity. Result:
-// returning browsers pin stale web-UI chunks for a year after every upgrade.
+// for content-hashed filenames. Since Clusterio 2.1 (Vite) the web bundles of core and
+// of plugins built with `clusterioPlugin` are content-hashed, and so are export assets.
+// What /static still serves under FIXED names is everything else: a plugin's other
+// static files and anything placed in /clusterio/static. Without this patch a returning
+// browser keeps such a file for a year after it changes.
 //
 // Applied at controller startup (idempotent, re-applies after image pulls) unless
 // CONTROLLER_STATIC_CACHE_MODE=immutable. Safe no-op with a log line if the upstream

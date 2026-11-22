@@ -25,14 +25,14 @@ env:
   # factorio-* PRs). The only place this workflow names it; CLAUDE.md,
   # CONTRIBUTING.md, README.md and docs/consumer-integration.md name it too.
   CLUSTERIO_FORK_REPO: https://github.com/solarcloud7/clusterio
-  # "Previous release" for the upgrade acceptance cases: both images of pin 2.0.3.r2,
-  # by digest, so the cases cross the 2.0.3 -> 2.1.1 boundary. `upgrade` starts the
+  # "Previous release" for the upgrade acceptance cases: both images of pin 2.1.1.r1,
+  # by digest, so the cases cross the 2.1.1 -> 2.1.2 boundary. `upgrade` starts the
   # candidate host on configuration written by the previous host's CLI;
   # `cluster-upgrade` starts both candidates on the volumes of a cluster the previous
   # images created. Roll both forward to the newest published pin of the outgoing
   # version in each bump (CLAUDE.md, Release Process step 1).
-  PREVIOUS_HOST_IMAGE: ghcr.io/clusterio/clusterio-docker-host@sha256:0244fc7be086eedd44534ab3fab823fa6dca2758a76bbf33892e07a869f68848
-  PREVIOUS_CONTROLLER_IMAGE: ghcr.io/clusterio/clusterio-docker-controller@sha256:0c8112ba4578caf04f7ba88de6b0361ee28b26695ef2e589d8d7a34a600b2cdf
+  PREVIOUS_HOST_IMAGE: ghcr.io/clusterio/clusterio-docker-host@sha256:7c31e0b708a525f79ab66e7afbfc5a112f8cbabeb2cfaa64e0f347ff10bac434
+  PREVIOUS_CONTROLLER_IMAGE: ghcr.io/clusterio/clusterio-docker-controller@sha256:949e7cba39825a593185c1aa292acd27467aaff6bbf6b76cb9511fdb2f4e9483
 
 jobs:
   # Cheap, fast-failing gates, split out of `build` for two reasons: they report a

@@ -15,8 +15,8 @@ Build the release selection you intend to test, then run one acceptance command:
 docker build -f Dockerfile.controller --build-arg CLUSTERIO_PLUGINS=none -t acceptance-controller .
 docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t acceptance-host .
 node tests/consumer-smoke.mjs acceptance-controller acceptance-host \
-  --previous-host ghcr.io/clusterio/clusterio-docker-host:2.0.3.r2 \
-  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:2.0.3.r2
+  --previous-host ghcr.io/clusterio/clusterio-docker-host:2.1.1.r1 \
+  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:2.1.1.r1
 ```
 
 The previous images must be available locally (pull them first when needed). CI pins their
@@ -50,7 +50,7 @@ Real host tokens reach containers through the docker client's environment, not a
 | controller-wipe | After the controller data volume is wiped, a host started first logs that it is waiting for the controller; once the controller starts, the host logs `configuring the host again`, takes the re-issued token and its id, and keeps its saved name |
 | failures | A failed hook prevents server startup |
 | upgrade | Previous image's native CLI creates configuration on a fresh volume; candidate preserves settings and stored files and takes the id from the token |
-| cluster-upgrade | A cluster created by the previous controller and host images restarts on the candidates: the host that had connected keeps its token, id 1 and assigned instance and is the only connected host; the host that never connected gets a new, accepted token |
+| cluster-upgrade | A cluster created by the previous controller and host images restarts on the candidates: the host that had connected keeps its token, its id (1 from a pre-2.1 controller, the one in its token since) and assigned instance and is the only connected host; no host is registered twice; the host that never connected keeps its token when the previous controller is Clusterio 2.1 or newer (that controller created it) and gets a new, accepted one from an older controller |
 
 The all-cases run also invokes `native-host-config.cjs` inside the host image. It checks
 real CLI reads/writes, invalid numeric writes that return exit code zero, and unreadable

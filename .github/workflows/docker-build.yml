@@ -25,13 +25,14 @@ env:
   # factorio-* PRs). The only place this workflow names it; CLAUDE.md,
   # CONTRIBUTING.md, README.md and docs/consumer-integration.md name it too.
   CLUSTERIO_FORK_REPO: https://github.com/solarcloud7/clusterio
-  # "Previous release" for the configuration-upgrade acceptance case: the host image
-  # of pin 2.0.3.r2, by digest. While CLUSTERIO_VERSION is still 2.0.3 this is a
-  # same-version check (configuration written by the 2.0.3 CLI survives candidate
-  # startup); it crosses a version boundary again from the next bump on. Roll it
-  # forward to the newest published pin of the outgoing version in that bump
-  # (CLAUDE.md, Release Process step 1).
+  # "Previous release" for the upgrade acceptance cases: both images of pin 2.0.3.r2,
+  # by digest, so the cases cross the 2.0.3 -> 2.1.1 boundary. `upgrade` starts the
+  # candidate host on configuration written by the previous host's CLI;
+  # `cluster-upgrade` starts both candidates on the volumes of a cluster the previous
+  # images created. Roll both forward to the newest published pin of the outgoing
+  # version in each bump (CLAUDE.md, Release Process step 1).
   PREVIOUS_HOST_IMAGE: ghcr.io/clusterio/clusterio-docker-host@sha256:0244fc7be086eedd44534ab3fab823fa6dca2758a76bbf33892e07a869f68848
+  PREVIOUS_CONTROLLER_IMAGE: ghcr.io/clusterio/clusterio-docker-controller@sha256:0c8112ba4578caf04f7ba88de6b0361ee28b26695ef2e589d8d7a34a600b2cdf
 
 jobs:
   # Cheap, fast-failing gates, split out of `build` for two reasons: they report a
@@ -164,6 +165,11 @@ jobs:
             git clone --depth 1 \
               "$CLUSTERIO_FORK_REPO" clusterio/
           }
+          # The entrypoints need Clusterio 2.1.1 or newer (host pairing endpoint,
+          # clusterioctl --output json). Older source builds, then fails at host start-up.
+          FORK_VERSION=$(sed -nE 's/^[[:space:]]*"version":[[:space:]]*"([^"]+)".*/\1/p' clusterio/packages/lib/package.json | head -1)
+          [ -n "$FORK_VERSION" ] && [ "$(printf '%s\n' 2.1.1 "$FORK_VERSION" | sort -V | head -1)" = 2.1.1 ] \
+            || { echo "::error::The Clusterio fork source is version '${FORK_VERSION:-unknown}'; these images need 2.1.1 or newer."; exit 1; }
           echo "CLUSTERIO_TARGET=custom" >> "$GITHUB_ENV"
 
       - name: Set Clusterio target (release — main-targeted PRs, main, and tags)
@@ -267,8 +273,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - name: Load previous release for configuration upgrade acceptance
-        run: docker pull "$PREVIOUS_HOST_IMAGE"
+      - name: Load previous release for upgrade acceptance
+        run: docker pull "$PREVIOUS_HOST_IMAGE" && docker pull "$PREVIOUS_CONTROLLER_IMAGE"
       - name: Accept the exact images selected for publication
         env:
           CONTROLLER_CANDIDATE: ${{ fromJSON(steps.meta-controller.outputs.json).tags[0] }}
@@ -276,7 +282,7 @@ jobs:
         run: |
           node tests/consumer-smoke.mjs "$CONTROLLER_CANDIDATE" "$HOST_CANDIDATE" \
             --plugins global_chat,player_sync,player_auth,research_sync,statistics_exporter,subspace_storage \
-            --skip-package --previous-host "$PREVIOUS_HOST_IMAGE"
+            --skip-package --previous-host "$PREVIOUS_HOST_IMAGE" --previous-controller "$PREVIOUS_CONTROLLER_IMAGE"
       - name: Retain candidate acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -423,6 +429,10 @@ jobs:
             "$CLUSTERIO_FORK_REPO" clusterio/ 2>/dev/null \
           || git clone --depth 1 \
             "$CLUSTERIO_FORK_REPO" clusterio/
+          # Same minimum as the build job's clone step.
+          FORK_VERSION=$(sed -nE 's/^[[:space:]]*"version":[[:space:]]*"([^"]+)".*/\1/p' clusterio/packages/lib/package.json | head -1)
+          [ -n "$FORK_VERSION" ] && [ "$(printf '%s\n' 2.1.1 "$FORK_VERSION" | sort -V | head -1)" = 2.1.1 ] \
+            || { echo "::error::The Clusterio fork source is version '${FORK_VERSION:-unknown}'; these images need 2.1.1 or newer."; exit 1; }
 
       - name: Build images
         run: |
@@ -527,7 +537,7 @@ jobs:
 
       # Runs on every build. Without Factorio credentials host-1 is headless, which is
       # how upstream Clusterio's own CI tests export-data. A headless export succeeds
-      # with a blank spritesheet and REPLACES the mod pack's export manifest, so the
+      # with no icons and REPLACES the mod pack's export manifest, so the
       # documented regenerate script refuses it unless told otherwise — both halves
       # are asserted here. With credentials host-1 has the game client, the script
       # must not refuse, and the spritesheet must contain real icons.
@@ -535,7 +545,7 @@ jobs:
         env:
           HAS_CLIENT: ${{ steps.setup.outputs.has_client }}
         run: |
-          CTL="docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json"
+          CTL="docker exec clusterio-controller npx clusterioctl --log-level error --config /clusterio/tokens/config-control.json"
           # regenerate <seconds> [flags]: the time limit runs INSIDE the container, so a
           # timed-out script is actually stopped (exit 124). `timeout` around `docker exec`
           # only kills the docker client and leaves the script running in the container.
@@ -543,13 +553,18 @@ jobs:
             local limit="$1"; shift
             docker exec clusterio-controller timeout "$limit" /scripts/regenerate-export-data.sh TestInstance "$@"
           }
-          # The manifest is fetched once per state change (each fetch is a docker exec plus
-          # a clusterioctl start-up) and assets are parsed from the saved text.
-          read_manifest() { MANIFEST=$($CTL mod-pack show "Space Age 2.1" | sed -n '/^exportManifest:/,$p'); }
-          asset() { printf '%s\n' "$MANIFEST" | sed -nE "s/^    $1: (.+)$/\1/p" | head -1; }
-          instance_status() { $CTL instance list 2>/dev/null | awk -F'|' '{gsub(/ /,"",$1); gsub(/ /,"",$5)} $1=="TestInstance"{print $5}'; }
-          # Non-zero bytes of the spritesheet's reconstructed pixels: 0 means every icon is
-          # blank. The counter lives in tests/ (unit-tested by the gates job) and is piped
+          # clusterioctl answers in JSON; the image's own helper reads it (no jq there).
+          ask() { docker exec -i clusterio-controller node /scripts/ctl-json.cjs "$@"; }
+          # The mod pack is fetched once per state change (each fetch is a docker exec plus
+          # a clusterioctl start-up) and assets are read from the saved answer.
+          read_manifest() {
+            MANIFEST=$($CTL mod-pack show "Space Age 2.1" --output json) \
+              || { echo "FAIL: could not read mod pack 'Space Age 2.1' from the controller"; exit 1; }
+          }
+          asset() { printf '%s\n' "$MANIFEST" | ask export-asset "$1" || true; }
+          instance_status() { $CTL instance list --output json 2>/dev/null | ask instance TestInstance status || true; }
+          # Non-zero bytes of the spritesheet's reconstructed pixels: 0 means it holds no
+          # icons. The counter lives in tests/ (unit-tested by the gates job) and is piped
           # into the controller's node, since tests/ is not part of the image.
           sheet_pixels() {
             docker exec -i clusterio-controller node - "/clusterio/static/$1" < tests/spritesheet-pixels.cjs
@@ -617,19 +632,18 @@ jobs:
           if [ "$HAS_CLIENT" = "true" ]; then
             [ "$PIXELS" -gt 0 ] \
               && echo "PASS: client export contains real icons" \
-              || { echo "FAIL: client export produced a blank spritesheet"; exit 1; }
+              || { echo "FAIL: client export produced a spritesheet without icons"; exit 1; }
           else
             # Tripwire, not a requirement: if a headless server ever ships icons, the
             # refusal above and docs/asset-export.md are out of date.
             [ "$PIXELS" -eq 0 ] \
-              && echo "PASS: headless export is blank, as documented" \
+              && echo "PASS: headless export has no icons, as documented" \
               || { echo "FAIL: headless export now contains icons — revisit the headless refusal in regenerate-export-data.sh and docs/asset-export.md"; exit 1; }
           fi
 
           echo "=== TestInstance running again after the export ==="
-          timeout 180 bash -c 'until docker exec clusterio-controller npx clusterioctl \
-            --config /clusterio/tokens/config-control.json \
-            instance list 2>/dev/null | grep "TestInstance" | grep -q "running"; do sleep 5; done' \
+          export -f ask instance_status; export CTL
+          timeout 180 bash -c 'until [ "$(instance_status)" = running ]; do sleep 5; done' \
             && echo "PASS: TestInstance restarted" \
             || { echo "FAIL: TestInstance did not come back after export-data"; exit 1; }
 
@@ -685,7 +699,7 @@ jobs:
           for n in 1 2; do
             RANGE="34${n}00-34${n}99"
             docker exec "clusterio-host-$n" cat /clusterio/data/config-host.json | grep -q "$RANGE" \
-              && echo "PASS: host-$n derived port range $RANGE from HOST_ID" \
+              && echo "PASS: host-$n derived port range $RANGE from its name" \
               || { echo "FAIL: host-$n config missing derived range $RANGE"
                    docker exec "clusterio-host-$n" cat /clusterio/data/config-host.json | grep -o 'factorio_port_range[^,}]*' || true
                    exit 1; }

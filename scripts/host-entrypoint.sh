@@ -11,7 +11,9 @@ HOST_MODS_DIR="/clusterio/mods"
 
 # Use HOST_NAME env var, fallback to hostname
 HOST_NAME="${HOST_NAME:-$(hostname)}"
-# Extract numeric ID from host name (e.g., clusterio-host-1 -> 1)
+# The number the host is named with (clusterio-host-1 -> 1). It names the token file, the
+# default port range and the EXPORT_HOST match. The host id itself is assigned by the
+# controller (Clusterio 2.1) and read back from the configuration before the host starts.
 HOST_ID=$(echo "$HOST_NAME" | grep -oE '[0-9]+$' || echo "1")
 TOKEN_FILE="$TOKENS_DIR/${HOST_NAME}.token"
 MAX_WAIT_SECONDS=300
@@ -126,8 +128,8 @@ else
 fi
 
 # Export-host guard: EXPORT_HOST designates a host to run export-data. On a host
-# without the game client the export still SUCCEEDS, but writes a blank
-# spritesheet — every web-UI icon is blank and nothing fails. Warn at the source
+# without the game client the export still SUCCEEDS, but exports no icons — the
+# web UI shows none and nothing fails. Warn at the source
 # instead (docs/asset-export.md). Only fires when EXPORT_HOST reaches this
 # container's environment (e.g. set in .env); the controller's seeding logs the
 # same condition either way.
@@ -137,7 +139,7 @@ if [ "${EXPORT_HOST:-0}" = "$HOST_ID" ] && [ "$FACTORIO_DIR" = "$FACTORIO_HOME" 
   else
     headless_reason="it has no game client installed"
   fi
-  echo "WARNING: EXPORT_HOST=$EXPORT_HOST designates THIS host ($HOST_NAME) for export-data, but $headless_reason — the export will succeed with a blank spritesheet, so every web-UI icon will be blank (docs/asset-export.md)" >&2
+  echo "WARNING: EXPORT_HOST=$EXPORT_HOST designates THIS host ($HOST_NAME) for export-data, but $headless_reason — the export will succeed without any icons, so the web UI will show none (docs/asset-export.md)" >&2
 fi
 
 # Diagnostic: report which Factorio version(s) are present in the resolved directory. Clusterio
@@ -238,8 +240,7 @@ _boot_race_guard_impl() {
     chown clusterio:clusterio "$GUARD_CTL_CONFIG" 2>/dev/null || true
     chmod 600 "$GUARD_CTL_CONFIG" 2>/dev/null || true
     guard_log "control config present (rewritten controller_url -> $GUARD_CONTROLLER_URL) — waiting for controller to report this host connected"
-    until ctl_ro host list | awk -F'|' -v hid="$HOST_ID" \
-        'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($3)~/^[0-9]+$/ && (t($3)+0)==(hid+0) && t($4)=="true"{ok=1} END{exit !ok}'; do
+    until ctl_ro host list --output json | node /scripts/ctl-json.cjs host-connected "$HOST_ID" 2>/dev/null; do
         if [ "$SECONDS" -ge "$deadline" ]; then
             guard_log "host never reported connected within the deadline — skipping"
             return 0
@@ -251,21 +252,19 @@ _boot_race_guard_impl() {
     # shared tokens volume is present) — "container up" now means "connected".
     touch /run/clusterio-connected 2>/dev/null || true
     guard_log "handshake confirmed at $T — checking for instances started before it"
-    ctl_ro instance list | awk -F'|' -v hid="$HOST_ID" -v T="$T" \
-        'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($3)~/^[0-9]+$/ && (t($3)+0)==(hid+0) && (t($5)=="running"||t($5)=="starting") && t($7)+0>0 && t($7)+0<T {print t($1)}' \
+    ctl_ro instance list --output json | node /scripts/ctl-json.cjs instances-before "$HOST_ID" "$T" 2>/dev/null \
     | while IFS= read -r inst; do
         guard_log "'$inst' started before the handshake — restarting it so plugins register"
-        ctl_ro instance stop "$inst" || true
+        ctl_ro instance stop "$inst" >/dev/null || true
         w=$((SECONDS + 90))
-        until ctl_ro instance list | awk -F'|' -v i="$inst" \
-            'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($1)==i && t($5)=="stopped"{ok=1} END{exit !ok}'; do
+        until [ "$(ctl_ro instance list --output json | node /scripts/ctl-json.cjs instance "$inst" status 2>/dev/null)" = "stopped" ]; do
             if [ "$SECONDS" -ge "$w" ]; then
                 guard_log "'$inst' did not stop within the wait budget — leaving it as-is"
                 break
             fi
             sleep 3
         done
-        ctl_ro instance start "$inst" || true
+        ctl_ro instance start "$inst" >/dev/null || true
         guard_log "'$inst' restarted after handshake"
     done
     guard_log "complete"
@@ -287,6 +286,10 @@ get_token() {
     return 1
 }
 
+# Bash as PID 1 ignores SIGTERM unless it has a handler, and the waits below can last
+# minutes: without this, `docker stop` would sit out its whole grace period.
+trap 'echo "Stopped before the host started"; exit 143' TERM INT
+
 # Wait only for first-boot credentials. Existing configuration is reconciled,
 # never deleted when credentials rotate or a native command fails.
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -301,11 +304,68 @@ if [ ! -f "$CONFIG_PATH" ]; then
         WAITED=$((WAITED + WAIT_INTERVAL))
     done
 fi
-gosu clusterio node /scripts/configure-host.cjs reconcile "$CONFIG_PATH" "$FACTORIO_DIR" "$HOST_NAME" "$TOKEN_FILE"
+token_file_state() {
+    if [ -f "$TOKEN_FILE" ]; then sha256sum < "$TOKEN_FILE"; else echo absent; fi
+}
+configure_host() {
+    TOKEN_FILE_SEEN=$(token_file_state)
+    gosu clusterio node /scripts/configure-host.cjs reconcile "$CONFIG_PATH" "$FACTORIO_DIR" "$HOST_NAME" "$TOKEN_FILE"
+    /scripts/run-pre-start.sh host "$CONFIG_PATH"
+    # Hooks may change identity or endpoint. Observe what the host will actually use; an
+    # id or controller URL that cannot work stops the start here.
+    EFFECTIVE_CONFIG=$(gosu clusterio node /scripts/configure-host.cjs effective "$CONFIG_PATH")
+}
+configure_host
 
-/scripts/run-pre-start.sh host "$CONFIG_PATH"
-# Hooks may change identity or endpoint. Observe what the host will actually use.
-EFFECTIVE_CONFIG=$(gosu clusterio node /scripts/configure-host.cjs effective "$CONFIG_PATH")
+# Token check (Clusterio 2.1). A host started with a token the controller rejects does not
+# exit: it asks to join the cluster again and waits for someone to approve it, and it never
+# rereads its token file. So ask the controller first. A rejected token usually means the
+# controller is about to re-issue this host's token file (its data volume was wiped, or
+# the host never connected before an upgrade from 2.0): wait for the file to change and
+# configure again. Hosts start as soon as the controller answers HTTP, which is before it
+# has issued tokens. Pre-start hooks run again after each new token.
+WAITED=0
+UNREACHABLE=0
+NOTED=""
+while :; do
+    check_rc=0
+    gosu clusterio node /scripts/configure-host.cjs check "$CONFIG_PATH" >/dev/null || check_rc=$?
+    case "$check_rc" in
+    0)  break ;;
+    3)  if [ -n "$CLUSTERIO_HOST_TOKEN" ]; then
+            echo "ERROR: the controller rejects the token in CLUSTERIO_HOST_TOKEN (revoked, issued by another controller, or its host was never registered). Supply a current token." >&2
+            exit 1
+        fi
+        if [ "$(token_file_state)" != "$TOKEN_FILE_SEEN" ]; then
+            echo "Token file $TOKEN_FILE changed — configuring the host again"
+            configure_host
+            continue
+        fi
+        if [ "$WAITED" -ge "$MAX_WAIT_SECONDS" ]; then
+            echo "ERROR: the controller rejects this host's token and no new token file appeared at $TOKEN_FILE within ${MAX_WAIT_SECONDS}s. The controller issues one for each host up to HOST_COUNT when it starts (docs/consumer-integration.md)." >&2
+            exit 1
+        fi
+        if [ "$NOTED" != rejected ]; then
+            echo "The controller rejects this host's token — waiting for it to issue a new token file at $TOKEN_FILE"
+            NOTED=rejected
+        fi
+        WAITED=$((WAITED + WAIT_INTERVAL)) ;;
+    4)  # Not bounded: without its controller the host has nothing to do, and starting it
+        # now would only move this wait into clusteriohost.
+        if [ $((UNREACHABLE % 60)) -eq 0 ]; then
+            echo "Waiting for the controller to answer before starting the host..."
+        fi
+        UNREACHABLE=$((UNREACHABLE + WAIT_INTERVAL)) ;;
+    5)  # A controller older than 2.1 has no check endpoint, and it does not need one.
+        echo "The controller did not say whether it accepts this host's token (older than Clusterio 2.1?) — starting the host anyway"
+        break ;;
+    *)  echo "ERROR: could not check this host's token with the controller (exit $check_rc)" >&2
+        exit 1 ;;
+    esac
+    sleep "$WAIT_INTERVAL"
+done
+trap - TERM INT
+
 HOST_ID=${EFFECTIVE_CONFIG%%$'\n'*}
 GUARD_CONTROLLER_URL=${EFFECTIVE_CONFIG#*$'\n'}
 boot_race_guard &

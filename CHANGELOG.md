@@ -11,6 +11,118 @@ traces back to its notice.
 Format: `## YYYY-MM-DD` heading, short bullets. Say what changed for someone running the
 images and what they must do. State the Clusterio / Factorio versions when they change.
 
+## 2026-11-22
+
+- **Clusterio `2.1.1`** (from `2.0.3`). First pin: `2.1.1.r1`. Node `24.22.3` and the
+  Factorio 2.1 target are unchanged. Upstream notes: the 2.1.0 and 2.1.1 sections of
+  Clusterio's `CHANGELOG.md`. Upgrade the controller and every host together. Steps:
+  `docs/consumer-integration.md` "Upgrading from 2.0.3". `clusterioctl` commands below run in
+  the controller container: `docker exec clusterio-controller npx clusterioctl --config
+  /clusterio/tokens/config-control.json …`.
+- **Before upgrading: log retention.** Clusterio 2.1 deletes log files older than 30 days at
+  start and hourly, starting with the first start after the upgrade. New variable
+  `CLUSTERIO_LOG_RETENTION_DAYS` (controller and each host, a whole number of days, `0` keeps
+  logs forever). When set, it is written to `controller.log_retention_days` /
+  `host.log_retention_days` before the server starts, on every boot. An invalid value stops
+  the container. To keep older logs, set it to `0` before the first start on 2.1.1.
+- **Before upgrading: `subspace_storage` needs its mod.** The plugin stays loaded by default.
+  An instance whose mod pack lacks the `subspace_storage` mod (>= `1.99.0`) refuses to start.
+  Do one of:
+  - add `subspace_storage` and its dependency `clusterio_lib` to the mod pack. A 2.1.1
+    controller with Factorio credentials downloads both zips at start, for the default mod
+    pack's Factorio version, into its mod store; it adds them to no pack. The credentials
+    reach the controller's config only on its first run (`FACTORIO_USERNAME` /
+    `FACTORIO_TOKEN`); on an existing cluster set `controller.factorio_username` /
+    `controller.factorio_token` with `clusterioctl controller config set`;
+  - set `subspace_storage.load_plugin` to `false` on each existing instance
+    (`clusterioctl instance config set <instance> subspace_storage.load_plugin false`; this
+    works on 2.0.3 too, so it can be done before upgrading and undone once the mod is in the
+    pack), in `instance.json` for instances seeding creates, or for the whole controller
+    (`clusterioctl controller config set subspace_storage.load_plugin false`, then restart
+    the controller);
+  - build with a `CLUSTERIO_PLUGINS` selection that leaves it out.
+
+  Seeding now prints the start error instead of only a timeout warning.
+- **Breaking: host pairing.** Clusterio 2.1 issues a host token only for a host the controller
+  has created. On every start, once it answers HTTP and before seeding, the controller checks
+  `clusterio-host-1..HOST_COUNT`. A token file it still accepts is kept. A missing or rejected
+  one is replaced through the host pairing endpoint (`POST /api/host-pairing`, admin token).
+  If a host of that name is already registered, it logs a warning and issues nothing.
+  Recovery: `clusterioctl host revoke clusterio-host-N` (unassigns its instances), restart
+  the controller, and once the host has reconnected under its new id assign each instance
+  again (`clusterioctl instance assign <instance> <host id>`). A host the controller created
+  but could not write a token file for is revoked again, so its name stays free.
+  - **Host ids are assigned by the controller at random on new clusters**: `clusterio-host-1`
+    no longer has id 1. The host takes `host.id` from its token on every boot. The name's
+    number N only picks the token file, the default port range, the seed folder and the
+    `EXPORT_HOST` match. Host names are not unique in Clusterio 2.1, so scripts must address
+    hosts by id, or by name only when one host has it.
+  - Token files appear once the controller is up, not before it starts. Hosts wait for theirs
+    (300 s on first boot).
+  - Before starting, a host asks the controller whether it accepts its token. If the token is
+    rejected, a token from `CLUSTERIO_HOST_TOKEN` exits 1 at once. Otherwise the host waits up
+    to 300 s in total for its token file to change, configures again (pre-start hooks run
+    again) and rechecks. With no answer, or a 5xx/429 answer, it keeps waiting; any other
+    answer (a pre-2.1 controller answers 404) starts the host anyway. An invalid
+    `host.controller_url` or host id stops the container. `docker stop` during any of these
+    waits ends the container at once ("Stopped before the host started").
+  - A first host configuration that fails (for example an invalid
+    `CLUSTERIO_LOG_RETENTION_DAYS` or an unusable token) leaves no `config-host.json`, so the
+    next start is a first start again.
+  - Removed upstream: `clusterioctl host generate-token`, `host revoke-token`,
+    `host create-config`, `clusteriocontroller bootstrap generate-host-token`, and the Hosts
+    page's "Generate Token" button in the web UI. To add a host, raise `HOST_COUNT` and
+    recreate the controller (`docker compose up -d`; `restart` does not re-read the
+    environment). A
+    remote host takes `/clusterio/tokens/clusterio-host-N.token` from the controller as
+    `CLUSTERIO_HOST_TOKEN`, which now also decides `host.id`. New upstream:
+    `clusterioctl host pending`, `approve <code>`, `reject <code>`, `revoke <host>`.
+  - A token can no longer be rotated in place. `host revoke` deletes the host and unassigns
+    its instances; the next controller start issues a new token under a new id.
+  - Handled without operator action: raising `HOST_COUNT` (then recreating the controller);
+    a wiped host data volume (same id from the token file, instances stay assigned, but their
+    saves and files were on that volume and are gone); a wiped controller data volume (every
+    token re-issued, hosts take the new one).
+  - The controller saves its database every 60 s and on a graceful stop. A controller killed
+    within 60 s of creating hosts loses them, with anything else done in that window; on its
+    next start it issues new tokens under new ids and the hosts follow.
+  - Unchanged: token file names, `HOST_COUNT`, `CLUSTERIO_HOST_TOKEN` precedence, the
+    `clusterio-host-N` convention and the port ranges (`34000 + N × 100` to `+99`).
+  - Existing 2.0.3 clusters: hosts that have connected keep their id, token and instances;
+    nothing to do. A host that never connected gets a new token and id.
+- **`clusterioctl` prints results on stdout**, and commands without a result print
+  `Command ran successfully`. `--output json` is available. `instance list` has three new
+  trailing columns (`isTemplate`, `templateId`, `modPackId`). The image scripts parse JSON;
+  consumer scripts that parse tables should move to `--output json`.
+- Headless export: `export-data` on a host without the game client still succeeds, but
+  exports no icons (an empty spritesheet) instead of blank ones. The host log has a WARN that
+  the base game's icon files were not found. Seeding and `regenerate-export-data.sh` say so;
+  the guard, its exit codes (`3`, `4`) and `--allow-headless` are unchanged.
+- **Breaking for plugins with a web module**: it must be built with Vite (`clusterioPlugin`
+  from `@clusterio/web_ui/vite.mjs`). A webpack build still loads its controller, host and
+  instance code, but its web UI is rejected ("Incompatible dist/web/manifest.json, the plugin
+  must be rebuilt with Vite"). Mount such plugins prebuilt: the release images do not contain
+  `vite`. `RequestError` is replaced by HTTP-style error classes, `lib.safeOutputFile` is
+  `lib.atomicOverwriteFile`, host token APIs moved to `controller.hosts.*`, and the hosts
+  datastore to `controller.hosts.records` (`set`, `delete`, `size`, the `update` event). See
+  upstream `docs/devs/plugin-migration-to-2.1.md`.
+- New clusters: upstream sets `controller.default_mod_pack_id` to `Base Game 2.1` at first
+  start; `DEFAULT_MOD_PACK` still overrides it.
+- New image files: `/scripts/ctl-json.cjs` and `/scripts/host-token.cjs` (both images),
+  `/scripts/provision-hosts.cjs` (controller). New variable: `CLUSTERIO_LOG_RETENTION_DAYS`.
+- CI:
+  - New `PREVIOUS_CONTROLLER_IMAGE` (the `2.0.3.r2` controller, by digest) next to
+    `PREVIOUS_HOST_IMAGE`. The acceptance harness takes `--previous-controller`.
+  - New acceptance cases `host-wipe`, `scale-out`, `controller-wipe` and `cluster-upgrade`.
+    `rotation`, `saved-identity`, `hook-identity` and `zero-id` assert the token-derived id.
+    Every (re)started host must log `Started host`; real host tokens reach containers through
+    the environment, not argv.
+  - Both fork-clone steps fail when the fork source is older than Clusterio 2.1.1.
+  - New unit tests `tests/ctl-json.test.cjs`, `tests/host-token.test.cjs` and
+    `tests/provision-hosts.test.cjs`.
+- Custom builds (`CLUSTERIO_TARGET=custom`) need Clusterio source at `2.1.1` or newer: the
+  entrypoints use the host pairing endpoint and `clusterioctl --output json`.
+
 ## 2026-11-21
 
 - **Behaviour change: `regenerate-export-data.sh` refuses a headless host.** A headless

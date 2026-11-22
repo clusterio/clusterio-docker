@@ -6,11 +6,13 @@
 # overlay:  docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 #
 # Pin a specific image build by setting CLUSTERIO_IMAGE_TAG in .env — for
-# production prefer the immutable revision pin (e.g. 2.0.3.r2); the
-# moving tags (:latest, :2.0.3) are rebuilt in place.
+# production prefer the immutable revision pin (e.g. 2.1.1.r1); the
+# moving tags (:latest, :2.1.1) are rebuilt in place.
 #
 # To add more hosts:
-#   1. Increment HOST_COUNT in controller environment
+#   1. Increment HOST_COUNT in controller environment, then recreate the
+#      controller (`docker compose up -d`; `docker compose restart` does not
+#      re-read the environment). It issues the new host's token on that start.
 #   2. Copy a host service block and change:
 #      - Service name: clusterio-host-N (N = host number)
 #      - container_name & hostname: clusterio-host-N
@@ -21,7 +23,10 @@
 #   4. Include the seed-mods mount: ./seed-data/mods:/clusterio/seed-mods:ro
 #
 # IMPORTANT: Host names MUST follow the pattern "clusterio-host-N" for
-# automatic token loading. The host extracts its ID from the name.
+# automatic token loading. The host reads clusterio-host-N.token, and N picks
+# the port range 34000+N*100 to +99 (34N00-34N99 for N 1-9; 34N00-34N09 above
+# is the same shorthand); the host id is assigned by the controller and read
+# from the token.
 # ============================================================================
 
 # Template anchor for host services (reduces duplication)

@@ -2,8 +2,8 @@
 
 Clusterio's web UI needs icon spritesheets, prototype data, and locale strings. Prototypes,
 locale and settings export from any host, but the icons need the **full game client** — the
-headless server ships no graphics, so an export from a headless host succeeds with a blank
-spritesheet. This repo automates the whole flow: getting a client onto one host, and running
+headless server ships no graphics, so an export from a headless host succeeds but exports no
+icons (an empty spritesheet). This repo automates the whole flow: getting a client onto one host, and running
 `export-data` against it.
 
 **Licensing**: the client is downloaded with **your** factorio.com credentials and is never
@@ -52,16 +52,25 @@ exists for offline/private images — prefer the runtime path. If you do bake, c
 Set in `.env` (controller env):
 
 ```bash
-EXPORT_HOST=1        # host ID that has the game client; 0/empty = skip export
+EXPORT_HOST=1        # N of the host clusterio-host-N that has the game client; 0/empty = skip export
 ```
+
+`EXPORT_HOST` names the host by the number in its name, not by its host id (since Clusterio
+2.1 the controller assigns host ids).
 
 During first-run seeding, the controller runs `clusterioctl instance export-data` **once**,
 against the first auto-start instance on that host, before starting it. Failure is a logged
 WARNING, not fatal: the cluster still comes up, without export data.
 
 **If that host has no game client the export still succeeds** — prototypes, locale and settings
-are exported, and the spritesheet is blank, so every web-UI icon is blank. Seeding logs a NOTE
-when this happens. Once the host has a client, regenerate (below).
+are exported, but no icons are (the spritesheet is empty), so the web UI has no icons. The
+host log has a WARN: `… icon files of the base game were not found in …, icons using them were
+not exported. The headless build of Factorio has no graphics and no full install was found …`.
+Seeding logs a NOTE when this happens. Once the host has a client, regenerate (below).
+
+Clusterio 2.1 can read the base game's icons from a full install of the same Factorio version
+under `host.factorio_directory`. These images keep the client as a direct install at
+`/opt/factorio-client` and point a headless host at `/opt/factorio`, so that path is not used.
 
 **After any Factorio / client / mod-pack version change, regenerate** — the seed-time export
 does not re-run, so a version bump otherwise ships stale prototypes and icons:
@@ -73,7 +82,7 @@ docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-na
 (The script stops the instance, retries `export-data` up to 6×, and restarts it.)
 
 **An export replaces the mod pack's whole export manifest.** A headless export run after a
-client export therefore swaps the good spritesheet for a blank one; the old file stays in
+client export therefore swaps the good spritesheet for an empty one; the old file stays in
 `/clusterio/static`, but nothing points at it any more. `regenerate-export-data.sh` guards
 against this: it checks the instance's host first and **refuses (exit 3, nothing stopped or
 changed) when that host is headless**. If it cannot tell — the instance is unassigned or its
@@ -118,10 +127,9 @@ the web-UI consumption API changed in **alpha.24** (clusterio#875 — `useExport
   instance pins. The entrypoint logs which version(s) it found at startup — compare against
   `factorio.version` in the instance config. A client install is a *single* version; keep the
   client's `FACTORIO_CLIENT_TAG` aligned with your instances' target version.
-- **All icons blank in the web UI, no errors anywhere**: the last export ran on a headless
-  host (credentials missing, or `SKIP_CLIENT=true`). The host log shows
-  `Running in headless mode` for the export. Get a client onto the export host, then
-  regenerate.
+- **No icons in the web UI**: the last export ran on a headless host (credentials missing,
+  or `SKIP_CLIENT=true`). The export host's log has the WARN `… icon files of the base game
+  were not found …`. Get a client onto the export host, then regenerate.
 - **`regenerate-export-data.sh` exits 3 or 4**: 3 means the instance's host is headless; 4
   means the instance is unassigned or its host could not be queried. Nothing was changed —
   see "An export replaces…" above.

@@ -20,11 +20,15 @@ CONTROL_CONFIG="$1"
 HOST_COUNT="${2:-0}"
 
 # HEADLESS_FACTORIO_DIR and host_factorio_dir, shared with regenerate-export-data.sh.
+# It also sets SCRIPT_LIB_DIR, where ctl-json.cjs and host-token.cjs live.
 # shellcheck source=scripts/export-host-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/export-host-lib.sh"
 # Overridable so the ordering test (tests/seed-instances-order.test.sh) can point
 # the script at a fixture tree. Production always uses the mounted default.
 SEED_DATA_DIR="${SEED_DATA_DIR:-/clusterio/seed-data}"
+TOKENS_DIR="${TOKENS_DIR:-/clusterio/tokens}"
+# How long an auto-started instance gets to reach "running". Overridable for the same test.
+START_WAIT_SECONDS="${START_WAIT_SECONDS:-120}"
 
 # Count of operations that failed. Seeding continues past a failure (one bad
 # instance must not strand the others) but the script exits non-zero so the
@@ -89,9 +93,9 @@ wait_for_hosts() {
   echo "Waiting for $expected host(s) to connect..."
   for i in $(seq 1 "$max_attempts"); do
     local connected
-    # Count data rows where the 'connected' column is 'true' (skip header row)
-    connected=$(gosu clusterio npx clusterioctl --log-level error host list \
-      --config "$CONTROL_CONFIG" 2>/dev/null | grep -c "| true " || true)
+    # ctl-json.cjs reads all of its input, so the pipe cannot break early.
+    connected=$(gosu clusterio npx clusterioctl --log-level error host list --output json \
+      --config "$CONTROL_CONFIG" 2>/dev/null | node "$SCRIPT_LIB_DIR/ctl-json.cjs" connected-hosts 2>/dev/null || true)
     connected=${connected:-0}
 
     if [ "$connected" -ge "$expected" ]; then
@@ -102,6 +106,25 @@ wait_for_hosts() {
   done
 
   echo "WARNING: Only $connected of $expected host(s) connected after waiting"
+}
+
+# ---------------------------------------------------------------------------
+# resolve_host_id <host-name> <host-number>
+# Prints the id clusterioctl addresses a seed folder's host by. Since Clusterio 2.1
+# the controller picks host ids and host names need not be unique, so the folder
+# name alone is not an address: the id the host's token file was issued for wins,
+# then a host only that one has the name, then id N for clusterio-host-N (clusters
+# set up before 2.1). Returns 1 when none of these names a registered host, 2 when
+# the controller did not list its hosts.
+# ---------------------------------------------------------------------------
+resolve_host_id() {
+  local name="$1" number="$2" token_id="" hosts
+  if [ -f "$TOKENS_DIR/$name.token" ]; then
+    token_id=$(node "$SCRIPT_LIB_DIR/host-token.cjs" id "$TOKENS_DIR/$name.token" 2>/dev/null) || token_id=""
+  fi
+  hosts=$(timeout 25 gosu clusterio npx clusterioctl --log-level error host list --output json \
+    --config "$CONTROL_CONFIG" 2>/dev/null) || return 2
+  node "$SCRIPT_LIB_DIR/ctl-json.cjs" resolve-host "$name" "$token_id" "$number" <<<"$hosts" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -163,7 +186,7 @@ apply_instance_config() {
 
     gosu clusterio npx clusterioctl --log-level error instance config set \
       "$instance_name" "$field" "$value" \
-      --config "$CONTROL_CONFIG" 2>/dev/null || {
+      --config "$CONTROL_CONFIG" >/dev/null 2>/dev/null || {
         echo "        Warning: Failed to set $field"
         continue
       }
@@ -176,18 +199,23 @@ apply_instance_config() {
 # ---------------------------------------------------------------------------
 # Seed a single instance
 # ---------------------------------------------------------------------------
+# seed_instance <instance-dir> <host-id> <host-number> <host-name>
+# host-id addresses the host in clusterioctl; host-number (clusterio-host-N) is what
+# EXPORT_HOST names.
 seed_instance() {
   local instance_dir="$1"
   local host_id="$2"
+  local host_number="$3"
+  local host_label="host $4 (id $2)"
   local instance_name
   instance_name=$(basename "$instance_dir")
 
-  # Idempotency check: skip if instance with this name already exists
-  local existing
-  existing=$(gosu clusterio npx clusterioctl --log-level error instance list \
-    --config "$CONTROL_CONFIG" 2>/dev/null | grep -F " $instance_name " || true)
-
-  if [ -n "$existing" ]; then
+  # Idempotency check: skip if instance with this name already exists. A list that
+  # cannot be read counts as "does not exist".
+  local instances
+  if instances=$(gosu clusterio npx clusterioctl --log-level error instance list --output json \
+       --config "$CONTROL_CONFIG" 2>/dev/null) \
+     && node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" id <<<"$instances" >/dev/null 2>&1; then
     echo "    Instance '$instance_name' already exists — skipping"
     return 0
   fi
@@ -210,7 +238,7 @@ seed_instance() {
   fi
 
   # Assign to host. An unassigned instance cannot start, so the same applies.
-  echo "      Assigning to host $host_id"
+  echo "      Assigning to $host_label"
   ctl_seed "instance assign '$instance_name' -> host $host_id" \
     instance assign "$instance_name" "$host_id" || {
     echo "      Skipping remaining steps for '$instance_name' — it is not assigned to a host." >&2
@@ -267,25 +295,25 @@ seed_instance() {
 
   if [ "$auto_start" = "true" ]; then
     # Export game data before starting if this host is the designated export host.
-    # EXPORT_HOST env var specifies which host ID has the full game client.
-    # Set to 0 or empty to skip export entirely.
+    # EXPORT_HOST env var specifies which host number (clusterio-host-N) has the
+    # full game client. Set to 0 or empty to skip export entirely.
     if [ -n "${EXPORT_HOST:-}" ] && [ "${EXPORT_HOST:-0}" != "0" ] \
-       && [ "$host_id" = "$EXPORT_HOST" ] \
+       && [ "$host_number" = "$EXPORT_HOST" ] \
        && [ "${_EXPORT_DONE:-}" != "true" ]; then
-      echo "      Exporting game data (host $host_id is the designated export host)..."
+      echo "      Exporting game data ($host_label is the designated export host)..."
       if gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
-          --config "$CONTROL_CONFIG" 2>/dev/null; then
+          --config "$CONTROL_CONFIG" >/dev/null 2>/dev/null; then
         echo "      Export-data complete."
-        # A host without the game client exports successfully, but with a blank
-        # spritesheet. Say so here: nothing else reports it. What counts as headless
+        # A host without the game client exports successfully, but exports no icons,
+        # and only the host's log says so. Say so here too. What counts as headless
         # is defined in export-host-lib.sh (docs/asset-export.md).
         local _export_host_dir=""
         _export_host_dir=$(host_factorio_dir "$host_id" "$CONTROL_CONFIG") || true
         if [ "$_export_host_dir" = "$HEADLESS_FACTORIO_DIR" ]; then
-          echo "      NOTE: host $host_id looks headless (its Factorio directory is $HEADLESS_FACTORIO_DIR, used when no game client is installed) — prototypes, locale and settings were exported, but every web-UI icon is blank. Install the client on this host, then run /scripts/regenerate-export-data.sh (docs/asset-export.md)."
+          echo "      NOTE: $host_label looks headless (its Factorio directory is $HEADLESS_FACTORIO_DIR, used when no game client is installed) — prototypes, locale and settings were exported, but no icons were (the host's log says why). Install the client on this host, then run /scripts/regenerate-export-data.sh (docs/asset-export.md)."
         fi
       else
-        echo "      WARNING: export-data failed — check the log of host $host_id (docs/asset-export.md)"
+        echo "      WARNING: export-data failed — check the log of $host_label (docs/asset-export.md)"
       fi
       _EXPORT_DONE=true
     fi
@@ -294,23 +322,40 @@ seed_instance() {
     # Honest start (#20): the old single-shot `instance start || true` could
     # fire before the host had created the instance dir and swallowed the
     # failure — an instance silently stayed stopped. Retry until running,
-    # WARN loud on giving up. ctl calls are timeout-bounded (#24 rule).
-    local _start_deadline=$((SECONDS + 120)) _started=false
+    # WARN loud on giving up, with the last error the start command gave.
+    # ctl calls are timeout-bounded (#24 rule).
+    local _start_deadline=$((SECONDS + START_WAIT_SECONDS)) _started=false _start_err="" _err _list
+    local _mods_missing=false
     while [ "$SECONDS" -lt "$_start_deadline" ]; do
-      timeout 25 gosu clusterio npx clusterioctl --log-level error instance start "$instance_name" \
-        --config "$CONTROL_CONFIG" 2>/dev/null || true
+      _err=$(timeout 25 gosu clusterio npx clusterioctl --log-level error instance start "$instance_name" \
+        --config "$CONTROL_CONFIG" 2>&1 >/dev/null) || true
+      if [ -n "$_err" ]; then
+        _start_err="$_err"
+      fi
+      # An instance whose mod pack lacks a mod a loaded plugin requires refuses to
+      # start (Clusterio 2.1.1). That does not change by waiting.
+      if [[ "$_err" == *"does not have the mods required by the loaded plugins"* ]]; then
+        _mods_missing=true
+        break
+      fi
       sleep 5
-      if timeout 25 gosu clusterio npx clusterioctl --log-level error instance list \
-          --config "$CONTROL_CONFIG" 2>/dev/null \
-          | awk -F'|' -v i="$instance_name" 'function t(s){gsub(/^ +| +$/,"",s);return s} NR>2 && t($1)==i && t($5)=="running"{ok=1} END{exit !ok}'; then
+      if _list=$(timeout 25 gosu clusterio npx clusterioctl --log-level error instance list --output json \
+            --config "$CONTROL_CONFIG" 2>/dev/null) \
+         && [ "$(node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" status <<<"$_list" 2>/dev/null)" = "running" ]; then
         _started=true
         break
       fi
     done
     if [ "$_started" = "true" ]; then
       echo "      Instance '$instance_name' is running."
+    elif [ "$_mods_missing" = "true" ]; then
+      echo "      WARNING: instance '$instance_name' cannot start: its mod pack lacks mods a loaded plugin requires (retrying cannot help)" >&2
+      sed 's/^/        /' <<<"$_start_err" >&2
     else
-      echo "      WARNING: instance '$instance_name' did not reach running within 120s — check the host's logs" >&2
+      echo "      WARNING: instance '$instance_name' did not reach running within ${START_WAIT_SECONDS}s — check the host's logs" >&2
+      if [ -n "$_start_err" ]; then
+        sed 's/^/        /' <<<"$_start_err" >&2
+      fi
     fi
   else
     echo "      Skipping auto-start (instance.auto_start=false)"
@@ -332,15 +377,29 @@ for host_dir in "$SEED_DATA_DIR/hosts"/*/; do
   fi
 
   host_name=$(basename "$host_dir")
-  # Extract host ID from folder name (e.g., clusterio-host-1 -> 1)
-  host_id=$(echo "$host_name" | grep -oE '[0-9]+$' || echo "")
+  # Extract the host number from the folder name (e.g., clusterio-host-1 -> 1),
+  # read as decimal like configure-host.cjs does (clusterio-host-08 -> 8).
+  host_number=$(echo "$host_name" | grep -oE '[0-9]+$' || echo "")
 
-  if [ -z "$host_id" ]; then
-    echo "  Warning: Could not extract host ID from '$host_name', skipping"
+  if [ -z "$host_number" ]; then
+    echo "  Warning: Could not extract host number from '$host_name', skipping"
+    continue
+  fi
+  host_number=$(sed -E 's/^0+([0-9])/\1/' <<<"$host_number")
+
+  resolve_rc=0
+  host_id=$(resolve_host_id "$host_name" "$host_number") || resolve_rc=$?
+  if [ "$resolve_rc" -ne 0 ]; then
+    if [ "$resolve_rc" -eq 2 ]; then
+      echo "  ERROR: could not list the controller's hosts, so seed folder '$host_name' has no host to go to. Skipping its instances." >&2
+    else
+      echo "  ERROR: no registered host matches seed folder '$host_name' — is HOST_COUNT at least $host_number, and did the host get a token? Skipping its instances." >&2
+    fi
+    SEED_FAILURES=$((SEED_FAILURES + 1))
     continue
   fi
 
-  echo "  Processing host: $host_name (ID: $host_id)"
+  echo "  Processing host: $host_name (id $host_id)"
 
   for instance_dir in "$host_dir"*/; do
     if [ -d "$instance_dir" ]; then
@@ -348,7 +407,7 @@ for host_dir in "$SEED_DATA_DIR/hosts"/*/; do
       # the reason and incremented SEED_FAILURES: one broken instance must not
       # strand the rest of the cluster. The non-zero exit below is what carries
       # the failure to the caller.
-      seed_instance "$instance_dir" "$host_id" || true
+      seed_instance "$instance_dir" "$host_id" "$host_number" "$host_name" || true
     fi
   done
 done

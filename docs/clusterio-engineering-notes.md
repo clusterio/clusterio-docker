@@ -51,9 +51,11 @@ rewriting `controller_url` to the cluster-internal address. Validated against a 
 instant table with the rewrite, 25 s hang-to-timeout without.
 
 ### 6. The controller serves non-hashed `/static` assets as `immutable, max-age=1y` (🛡 ⬆)
-Module-Federation entries/manifests and commonly fixed-name plugin chunks get pinned by
-returning browsers for a year — stale web UI after every upgrade. One consumer shipped a
-boot-time monkeypatch of `Controller.js` for this.
+Fixed-name assets get pinned by returning browsers for a year. Since Clusterio 2.1 the web
+bundles of core and of plugins built with Vite's `clusterioPlugin` are content-hashed (e.g.
+`static/global_chat-BOxjjpjN.js`), and so are export assets; a plugin's other static files and
+anything placed in `/clusterio/static` are still served under fixed names. One consumer
+shipped a boot-time monkeypatch of `Controller.js` for this.
 **Images**: the patch is absorbed and env-gated (`CONTROLLER_STATIC_CACHE_MODE`, default
 `revalidate`); no-ops gracefully if core changes. **Upstream candidate**: serve non-hashed
 assets with revalidation.
@@ -106,6 +108,23 @@ an INFO when an instance is created without an explicit setting.
 `this.logger.*` lands in `/clusterio/logs/{cluster,host}/*.log`, so `docker logs` shows nothing
 from plugins — called "the #1 gotcha that wastes hours" by one consumer, which built a whole
 tool around reading the files. **Planned** (#19): env-gated streaming to stdout.
+
+## Host pairing (Clusterio 2.1)
+
+### 12. A host started with a rejected token waits for approval forever (🛡)
+`clusteriohost run` with a token the controller rejects does not exit: it opens a join
+request and waits for someone to approve it, and it never rereads its token file. A fresh,
+valid token file on the shared volume is only picked up by a container restart.
+**Images**: the host entrypoint asks `GET /api/host-pairing/check` before starting. A
+rejected file token waits up to 300 s for the file to change and reconfigures; a rejected
+`CLUSTERIO_HOST_TOKEN` exits 1.
+
+### 13. Host names are not unique; the controller picks host ids (🛡)
+Pairing the same name twice gives two host records with that name, and
+`clusterioctl instance assign` given that name picks one of them. Ids come from the controller at random.
+**Images**: the controller entrypoint never pairs a name that is already registered (it
+warns instead), hosts take `host.id` from their token, and seeding resolves a seed folder to
+the id its token file names before falling back to the name.
 
 ---
 

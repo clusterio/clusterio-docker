@@ -21,7 +21,7 @@ guide is for writing one.
    **`"clusterio-plugin"` in `keywords`**. That keyword is load-bearing — without it the
    plugin npm-installs cleanly and then **silently never loads**. CI pins this whole
    lifecycle with the `seed-data/external_plugins/ci_fixture` plugin.
-3. **Target Clusterio 2.0's plugin API.** Plugins are ES modules (`"type": "module"`), the
+3. **Target Clusterio 2.1's plugin API** (the 2.0 module rules below still apply). Plugins are ES modules (`"type": "module"`), the
    entrypoint paths in the plugin declaration carry the `.js` extension
    (`controllerEntrypoint: "controller.js"`), and each entrypoint exports a default async
    function that attaches hooks. Class exports still load but log a deprecation warning, and
@@ -35,6 +35,22 @@ guide is for writing one.
    in-game `clusterio_api.send_udp`; Clusterio then rejects enabling its `<name>.load_plugin`
    on an instance without `factorio.enable_lua_udp` (see
    [seed-data.md](seed-data.md#instance-configuration)).
+5. **Clusterio 2.1 changes for plugins** (upstream's `docs/devs/plugin-migration-to-2.1.md`
+   has the details):
+   - **Web modules are built with Vite**: a `vite.config.js` using `clusterioPlugin` from
+     `@clusterio/web_ui/vite.mjs`, and `vite build` in place of webpack. A plugin built with
+     webpack still loads its controller, host and instance code, but its web UI is rejected
+     ("Incompatible dist/web/manifest.json, the plugin must be rebuilt with Vite").
+   - **Mount a web module prebuilt.** `install-plugins.sh` runs `npm install --omit=dev`, and
+     the release images do not contain `vite`, so `dist/web` must already be in the plugin directory.
+   - `RequestError` is replaced by error classes following HTTP status codes (`ValidationError`,
+     `ForbiddenError`, `NotFoundError`, `ConflictError`, `UnavailableError`, `TimeoutError`);
+     `lib.safeOutputFile` is `lib.atomicOverwriteFile`; host token APIs moved to
+     `controller.hosts.*` (`signHostToken`, `verifyHostToken`, `createHost`), and the hosts
+     datastore to `controller.hosts.records` (`set`, `delete`, `size`, the `update` event;
+     upstream's "Host manager" section).
+   - A plugin can declare `requiredMods`; an instance whose mod pack lacks them refuses to
+     start (the bundled `subspace_storage` requires the `subspace_storage` mod).
 
 ## The two rules that cost the most when unknown
 

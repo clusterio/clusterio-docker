@@ -5,6 +5,7 @@ Fast regressions:
 ```sh
 bash tests/seed-instances-order.test.sh
 bash tests/seed-mod-versions.test.sh
+bash tests/regenerate-export-guard.test.sh
 node --test tests/*.test.cjs
 ```
 
@@ -13,7 +14,7 @@ Build the release selection you intend to test, then run one acceptance command:
 ```sh
 docker build -f Dockerfile.controller --build-arg CLUSTERIO_PLUGINS=none -t acceptance-controller .
 docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t acceptance-host .
-node tests/consumer-smoke.mjs acceptance-controller acceptance-host --previous-host ghcr.io/solarcloud7/clusterio-docker-host:2.0.0-alpha.27.r7
+node tests/consumer-smoke.mjs acceptance-controller acceptance-host --previous-host ghcr.io/clusterio/clusterio-docker-host:2.0.3.r2
 ```
 
 The previous image must be available locally (pull it first when needed). CI pins its digest.
@@ -91,6 +92,7 @@ Local acceptance on 2026-09-10 (reports use UTC):
 | 2026-10-28: the same images, `--case upgrade` with previous host `2.0.2.r1` | `cd-smoke-ebdf3be2-d17` | Failed in the fixture step, before the candidate ran: the harness writes previous-image configuration with `config set` and no `config create`, which a 2.0 CLI rejects on a missing file |
 | 2026-10-29: Clusterio 2.0.3 images at `b0c2cc1`, harness fixture runs `config create` first when the previous CLI supports it, `--case upgrade` with previous host alpha.27.r7 | `cd-smoke-f0d6b6e5-1d3` | Upgrade, packaged-plugin and native CLI checks passed; the fixture tolerates the pre-2.0 CLI's `Unknown argument: create` and lets `config set` create the file |
 | 2026-10-29: the same images and harness, `--case upgrade` with previous host `2.0.2.r1` | `cd-smoke-b82e8ad6-6a4` | Upgrade, packaged-plugin and native CLI checks passed: 2.0.2-written configuration survives candidate startup |
+| 2026-11-21: Clusterio 2.0.3 images built without cache from the working tree on `6e55181` (Node 24.22.3 base, `@clusterio/lib` pinned; every `@clusterio/*` package in both images read back as 2.0.3), six bundled plugins, previous host `2.0.3.r2` by digest | `cd-smoke-e1832200-78c` | All ten startup scenarios (incl. the `2.0.3.r2` → candidate upgrade case), native CLI plugin-selection and native configuration checks passed; run with `--skip-package`, as CI's publication acceptance is |
 
 Every listed run cleaned up its disposable resources. Assertions read native effective
 configuration independently of startup messages. The two final runs include configuration

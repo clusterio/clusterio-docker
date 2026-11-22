@@ -18,6 +18,10 @@ set -eo pipefail
 
 CONTROL_CONFIG="$1"
 HOST_COUNT="${2:-0}"
+
+# HEADLESS_FACTORIO_DIR and host_factorio_dir, shared with regenerate-export-data.sh.
+# shellcheck source=scripts/export-host-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/export-host-lib.sh"
 # Overridable so the ordering test (tests/seed-instances-order.test.sh) can point
 # the script at a fixture tree. Production always uses the mounted default.
 SEED_DATA_DIR="${SEED_DATA_DIR:-/clusterio/seed-data}"
@@ -272,8 +276,16 @@ seed_instance() {
       if gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
           --config "$CONTROL_CONFIG" 2>/dev/null; then
         echo "      Export-data complete."
+        # A host without the game client exports successfully, but with a blank
+        # spritesheet. Say so here: nothing else reports it. What counts as headless
+        # is defined in export-host-lib.sh (docs/asset-export.md).
+        local _export_host_dir=""
+        _export_host_dir=$(host_factorio_dir "$host_id" "$CONTROL_CONFIG") || true
+        if [ "$_export_host_dir" = "$HEADLESS_FACTORIO_DIR" ]; then
+          echo "      NOTE: host $host_id looks headless (its Factorio directory is $HEADLESS_FACTORIO_DIR, used when no game client is installed) — prototypes, locale and settings were exported, but every web-UI icon is blank. Install the client on this host, then run /scripts/regenerate-export-data.sh (docs/asset-export.md)."
+        fi
       else
-        echo "      Export-data failed (game client may not be installed on host $host_id)"
+        echo "      WARNING: export-data failed — check the log of host $host_id (docs/asset-export.md)"
       fi
       _EXPORT_DONE=true
     fi

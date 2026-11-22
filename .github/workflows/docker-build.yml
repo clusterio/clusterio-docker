@@ -21,6 +21,17 @@ env:
   REGISTRY: ghcr.io
   CONTROLLER_IMAGE: ${{ github.repository }}-controller
   HOST_IMAGE: ${{ github.repository }}-host
+  # Source for the dormant custom/fork builds (non-main branch pushes and
+  # factorio-* PRs). The only place this workflow names it; CLAUDE.md,
+  # CONTRIBUTING.md, README.md and docs/consumer-integration.md name it too.
+  CLUSTERIO_FORK_REPO: https://github.com/solarcloud7/clusterio
+  # "Previous release" for the configuration-upgrade acceptance case: the host image
+  # of pin 2.0.3.r2, by digest. While CLUSTERIO_VERSION is still 2.0.3 this is a
+  # same-version check (configuration written by the 2.0.3 CLI survives candidate
+  # startup); it crosses a version boundary again from the next bump on. Roll it
+  # forward to the newest published pin of the outgoing version in that bump
+  # (CLAUDE.md, Release Process step 1).
+  PREVIOUS_HOST_IMAGE: ghcr.io/clusterio/clusterio-docker-host@sha256:0244fc7be086eedd44534ab3fab823fa6dca2758a76bbf33892e07a869f68848
 
 jobs:
   # Cheap, fast-failing gates, split out of `build` for two reasons: they report a
@@ -34,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # full history: the changelog gate diffs the pushed range
 
@@ -68,6 +79,11 @@ jobs:
 
       - name: Seed mods — highest numeric version per name
         run: bash tests/seed-mod-versions.test.sh
+
+      # Stubbed, no Docker. The integration suite only reaches the headless branch
+      # of the guard; the client-host and fail-closed branches are covered here.
+      - name: Export regeneration — headless hosts are refused
+        run: bash tests/regenerate-export-guard.test.sh
 
       - name: Resolve Clusterio version for release image tag
         id: clusterio_version
@@ -124,7 +140,7 @@ jobs:
       # Shallow is fine here: the changelog gate (the only consumer of full
       # history) moved to `gates`.
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # The active line is `main`, built from the RELEASE (npm) target. The custom/fork
       # path below is DORMANT — kept for a future Factorio line that npm may lag: a
@@ -142,11 +158,11 @@ jobs:
         run: |
           echo "Cloning Clusterio fork branch: $REF_NAME"
           git clone --depth 1 -b "$REF_NAME" \
-            https://github.com/solarcloud7/clusterio clusterio/ 2>/dev/null \
+            "$CLUSTERIO_FORK_REPO" clusterio/ 2>/dev/null \
           || {
             echo "Branch '$REF_NAME' not found in fork, falling back to the fork's default branch"
             git clone --depth 1 \
-              https://github.com/solarcloud7/clusterio clusterio/
+              "$CLUSTERIO_FORK_REPO" clusterio/
           }
           echo "CLUSTERIO_TARGET=custom" >> "$GITHUB_ENV"
 
@@ -248,11 +264,11 @@ jobs:
           cache-from: type=gha,scope=host
           cache-to: type=gha,mode=max,scope=host
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Load previous release for configuration upgrade acceptance
-        run: docker pull ghcr.io/solarcloud7/clusterio-docker-host@sha256:98a66d7b39359408ebbb255ff44814b2920ab0fa30596a8a71a872b40df2e232
+        run: docker pull "$PREVIOUS_HOST_IMAGE"
       - name: Accept the exact images selected for publication
         env:
           CONTROLLER_CANDIDATE: ${{ fromJSON(steps.meta-controller.outputs.json).tags[0] }}
@@ -260,7 +276,7 @@ jobs:
         run: |
           node tests/consumer-smoke.mjs "$CONTROLLER_CANDIDATE" "$HOST_CANDIDATE" \
             --plugins global_chat,player_sync,player_auth,research_sync,statistics_exporter,subspace_storage \
-            --skip-package --previous-host ghcr.io/solarcloud7/clusterio-docker-host@sha256:98a66d7b39359408ebbb255ff44814b2920ab0fa30596a8a71a872b40df2e232
+            --skip-package --previous-host "$PREVIOUS_HOST_IMAGE"
       - name: Retain candidate acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -305,7 +321,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Create GitHub Release from the top CHANGELOG entry
         env:
@@ -332,10 +348,15 @@ jobs:
   test:
     needs: gates
     runs-on: ubuntu-latest
-    
+    # Above the ~50 minutes the steps' own waits add up to, so a slow run fails at a
+    # step (and dumps logs) instead of being cancelled by this cap.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up test environment
         id: setup
@@ -351,7 +372,7 @@ jobs:
             echo "Factorio credentials available — game client will be downloaded at runtime"
           else
             echo "has_client=false" >> "$GITHUB_OUTPUT"
-            echo "No Factorio credentials — skipping game client tests"
+            echo "No Factorio credentials — export-data is tested against the headless server"
           fi
 
           # Create database seed from examples
@@ -399,9 +420,9 @@ jobs:
           REF_NAME: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
         run: |
           git clone --depth 1 -b "$REF_NAME" \
-            https://github.com/solarcloud7/clusterio clusterio/ 2>/dev/null \
+            "$CLUSTERIO_FORK_REPO" clusterio/ 2>/dev/null \
           || git clone --depth 1 \
-            https://github.com/solarcloud7/clusterio clusterio/
+            "$CLUSTERIO_FORK_REPO" clusterio/
 
       - name: Build images
         run: |
@@ -504,21 +525,113 @@ jobs:
             && echo "PASS: StoppedInstance is not running (auto_start=false)" \
             || { echo "FAIL: StoppedInstance should not be running"; exit 1; }
 
+      # Runs on every build. Without Factorio credentials host-1 is headless, which is
+      # how upstream Clusterio's own CI tests export-data. A headless export succeeds
+      # with a blank spritesheet and REPLACES the mod pack's export manifest, so the
+      # documented regenerate script refuses it unless told otherwise — both halves
+      # are asserted here. With credentials host-1 has the game client, the script
+      # must not refuse, and the spritesheet must contain real icons.
       - name: Verify export-data
-        if: steps.setup.outputs.has_client == 'true'
+        env:
+          HAS_CLIENT: ${{ steps.setup.outputs.has_client }}
         run: |
-          echo "=== Stopping TestInstance for export-data ==="
-          docker exec clusterio-controller npx clusterioctl \
-            --config /clusterio/tokens/config-control.json \
-            instance stop TestInstance 2>/dev/null || true
-          sleep 5
+          CTL="docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json"
+          # regenerate <seconds> [flags]: the time limit runs INSIDE the container, so a
+          # timed-out script is actually stopped (exit 124). `timeout` around `docker exec`
+          # only kills the docker client and leaves the script running in the container.
+          regenerate() {
+            local limit="$1"; shift
+            docker exec clusterio-controller timeout "$limit" /scripts/regenerate-export-data.sh TestInstance "$@"
+          }
+          # The manifest is fetched once per state change (each fetch is a docker exec plus
+          # a clusterioctl start-up) and assets are parsed from the saved text.
+          read_manifest() { MANIFEST=$($CTL mod-pack show "Space Age 2.1" | sed -n '/^exportManifest:/,$p'); }
+          asset() { printf '%s\n' "$MANIFEST" | sed -nE "s/^    $1: (.+)$/\1/p" | head -1; }
+          instance_status() { $CTL instance list 2>/dev/null | awk -F'|' '{gsub(/ /,"",$1); gsub(/ /,"",$5)} $1=="TestInstance"{print $5}'; }
+          # Non-zero bytes of the spritesheet's reconstructed pixels: 0 means every icon is
+          # blank. The counter lives in tests/ (unit-tested by the gates job) and is piped
+          # into the controller's node, since tests/ is not part of the image.
+          sheet_pixels() {
+            docker exec -i clusterio-controller node - "/clusterio/static/$1" < tests/spritesheet-pixels.cjs
+          }
 
-          echo "=== Running export-data on TestInstance (host-1 game client) ==="
-          timeout 120 docker exec clusterio-controller npx clusterioctl \
+          # Seeding normally exported once already (EXPORT_HOST=1), so a manifest exists to
+          # protect. That export is a single attempt whose failure is only a warning, so
+          # its absence is reported, not failed: the exports below are the real test.
+          read_manifest
+          BEFORE=$(asset spritesheet)
+          if [ -n "$BEFORE" ]; then
+            echo "Spritesheet after seeding: $BEFORE"
+          else
+            echo "::warning::Seeding left no export manifest (its one export attempt failed); continuing with the export checks"
+          fi
+
+          if [ "$HAS_CLIENT" = "true" ]; then
+            echo "=== host-1 has the game client: the script must export without the override ==="
+            regenerate 300 \
+              && echo "PASS: export-data completed on the client host" \
+              || { echo "FAIL: export-data failed on the client host"; docker logs clusterio-host-1 2>&1 | tail -40; exit 1; }
+          else
+            echo "=== host-1 is headless: the script must refuse and change nothing ==="
+            rc=0; regenerate 120 || rc=$?
+            # Exit 3 is "host is headless" specifically; a failed lookup exits 4, so this
+            # also proves the script identified host-1's Factorio directory.
+            [ "$rc" -eq 3 ] \
+              && echo "PASS: refused with exit 3 (host identified as headless)" \
+              || { echo "FAIL: expected the headless refusal (exit 3), got exit $rc"; exit 1; }
+            read_manifest
+            [ "$(asset spritesheet)" = "$BEFORE" ] \
+              && echo "PASS: export manifest untouched by the refusal" \
+              || { echo "FAIL: the refused run changed the export manifest"; exit 1; }
+            [ "$(instance_status)" = "running" ] \
+              && echo "PASS: TestInstance was not stopped by the refusal" \
+              || { echo "FAIL: TestInstance is '$(instance_status)' after a refused run"; exit 1; }
+
+            echo "=== --allow-headless: the export itself works on a headless host ==="
+            regenerate 300 --allow-headless \
+              && echo "PASS: export-data completed" \
+              || { echo "FAIL: export-data failed"; docker logs clusterio-host-1 2>&1 | tail -40; exit 1; }
+          fi
+
+          echo "=== Export manifest lists every asset and each file was written ==="
+          read_manifest
+          for key in settings prototypes metadata spritesheet locale; do
+            FILE=$(asset "$key")
+            [ -n "$FILE" ] \
+              || { echo "FAIL: export manifest has no '$key' asset"; printf '%s\n' "$MANIFEST"; exit 1; }
+            docker exec clusterio-controller test -s "/clusterio/static/$FILE" \
+              || { echo "FAIL: manifest entry $key -> $FILE is missing from /clusterio/static"; exit 1; }
+            echo "PASS: $key -> $FILE"
+          done
+
+          echo "=== Prototype dump is populated ==="
+          docker exec clusterio-controller node -e \
+            'const n=Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1]))).length; console.log(n+" prototype types"); process.exit(n>50?0:1)' \
+            "/clusterio/static/$(asset prototypes)" \
+            && echo "PASS: more than 50 prototype types exported" \
+            || { echo "FAIL: prototype dump has 50 or fewer types"; exit 1; }
+
+          echo "=== Spritesheet content matches the host type ==="
+          PIXELS=$(sheet_pixels "$(asset spritesheet)")
+          echo "non-zero bytes of pixel data: $PIXELS"
+          if [ "$HAS_CLIENT" = "true" ]; then
+            [ "$PIXELS" -gt 0 ] \
+              && echo "PASS: client export contains real icons" \
+              || { echo "FAIL: client export produced a blank spritesheet"; exit 1; }
+          else
+            # Tripwire, not a requirement: if a headless server ever ships icons, the
+            # refusal above and docs/asset-export.md are out of date.
+            [ "$PIXELS" -eq 0 ] \
+              && echo "PASS: headless export is blank, as documented" \
+              || { echo "FAIL: headless export now contains icons — revisit the headless refusal in regenerate-export-data.sh and docs/asset-export.md"; exit 1; }
+          fi
+
+          echo "=== TestInstance running again after the export ==="
+          timeout 180 bash -c 'until docker exec clusterio-controller npx clusterioctl \
             --config /clusterio/tokens/config-control.json \
-            instance export-data TestInstance \
-            && echo "PASS: export-data completed successfully" \
-            || { echo "FAIL: export-data failed"; exit 1; }
+            instance list 2>/dev/null | grep "TestInstance" | grep -q "running"; do sleep 5; done' \
+            && echo "PASS: TestInstance restarted" \
+            || { echo "FAIL: TestInstance did not come back after export-data"; exit 1; }
 
       - name: Verify plugin logs stream to stdout
         run: |
@@ -698,8 +811,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - uses: docker/setup-buildx-action@v4

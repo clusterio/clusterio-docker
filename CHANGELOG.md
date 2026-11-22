@@ -1,388 +1,246 @@
 # Changelog — image change notices
 
-Every push that changes **image-affecting files** (`Dockerfile.*`, `scripts/`,
-`docker-compose*.yml`, `.github/workflows/`) MUST add an entry here — CI's
-**changelog gate** fails the build otherwise. Newest first.
+Every push that changes image-affecting files (`Dockerfile.*`, `scripts/`,
+`docker-compose*.yml`, `.github/workflows/`) must add an entry here; CI's changelog gate
+fails the build otherwise. Newest first.
 
-The top entry is published to each build's run summary, and images carry
-`/clusterio/BUILD_INFO` (`gitSha`), so any running container links back to its
-change notice: container → sha → this file.
+The top entry is published to each build's run summary and, on a tag build, as the GitHub
+Release notes. Images carry `/clusterio/BUILD_INFO` (`gitSha`), so a running container
+traces back to its notice.
 
-Format: `## YYYY-MM-DD` heading + short bullets. Always state the Clusterio /
-Factorio versions when they change.
+Format: `## YYYY-MM-DD` heading, short bullets. Say what changed for someone running the
+images and what they must do. State the Clusterio / Factorio versions when they change.
+
+## 2026-11-21
+
+- **Behaviour change: `regenerate-export-data.sh` refuses a headless host.** A headless
+  export does not fail: it succeeds with a blank spritesheet and replaces the mod pack's
+  export manifest, blanking every web-UI icon. The script now exits before stopping the
+  instance when the instance's host is headless (exit `3`) or cannot be determined (exit
+  `4`). `--allow-headless` exports anyway.
+  - "Headless" means `host.factorio_directory` is exactly `/opt/factorio`. A full game
+    installed at that path is refused too; a client-less host using another directory is
+    not detected.
+  - `clusterioctl instance export-data` and the web UI's export action are upstream and
+    remain unguarded.
+- Seeding on a headless `EXPORT_HOST` logs a NOTE that icons are blank. The host startup
+  warning says the same and fires for any headless export host, not only `SKIP_CLIENT=true`.
+  Both used to say the export fails.
+- **Fix: release builds pin `@clusterio/lib`.** Upstream depends on it as `^2.0.3`, so a
+  `2.0.3` image built after Clusterio `2.1.0` was published (2026-11-14) would have shipped
+  lib `2.1.1`. The build installs it at `CLUSTERIO_VERSION` and fails if any `@clusterio/*`
+  package is off-version. The published `2.0.3.r2` images are unaffected.
+- Base image: `node:24-bookworm-slim` re-pinned to `dc26ae92…`. Node `24.22.3` (from
+  `24.20.0`), npm `11.19.1` (from `11.19.0`), Debian `12.15`.
+- New controller-image file `scripts/export-host-lib.sh`: the definition of a headless host.
+- `SECURITY.md` removed (upstream has none, and private vulnerability reporting is not
+  enabled here). Key Constraints in `docs/consumer-integration.md` now states that every
+  container mounting `shared-tokens` can read the cluster-admin credential, and that the
+  token files there are written only on the controller's first run.
+- CI:
+  - Export-data is tested on every build; the step had always been skipped for lack of
+    Factorio credentials.
+  - The upgrade acceptance case uses this organisation's `2.0.3.r2` host image instead of
+    the `ghcr.io/solarcloud7` alpha image. It is a same-version check until the next
+    Clusterio bump, so CI no longer covers the alpha.27 → 2.0 host-configuration path.
+  - `test` job capped at 60 minutes with a read-only token; `actions/checkout` and
+    `actions/setup-node` at `v7`.
+- Clusterio `2.0.3`, unchanged.
 
 ## 2026-11-06
 
-- **Images moved to the clusterio organisation**: the repository is now
-  `clusterio/clusterio-docker`, and images publish as
-  `ghcr.io/clusterio/clusterio-docker-controller` / `-host` (CI derives the names from the
-  repository). The old `ghcr.io/solarcloud7/clusterio-docker-*` images and pins stay
-  pullable, but nothing new is published there — `2.0.3.r1` is their last pin; the first pin
-  under the new name is `2.0.3.r2`. `docker-compose.yml` defaults and the image `source` /
-  `vendor` labels point at the new location. Clusterio `2.0.3`, unchanged; no image content
-  change beyond the labels.
+- **Images moved to `ghcr.io/clusterio/clusterio-docker-controller` / `-host`**; the
+  repository is now `clusterio/clusterio-docker`. The old
+  `ghcr.io/solarcloud7/clusterio-docker-*` images stay pullable but are frozen at
+  `2.0.3.r1`. The first pin under the new name is `2.0.3.r2`. Compose defaults and image
+  labels point at the new location; no other image change. Clusterio `2.0.3`.
 
 ## 2026-10-28
 
-- **Clusterio `2.0.3`** (from `2.0.2`) — upstream feature release. Factorio target unchanged
-  (2.1 packs); all bundled `@clusterio/*` packages still require Node ≥ 22. Upstream notes:
-  <https://github.com/clusterio/clusterio/releases/tag/v2.0.3>. Relevant to these images:
-  - Fixes instances that start at the same time corrupting a shared Factorio download
-    (clusterio#1105) — the images download Factorio at runtime.
-  - New opt-in Lua UDP messaging (`factorio.enable_lua_udp`, `factorio.lua_udp_port`, default
-    off). It binds a localhost port inside the host container, so no port needs publishing.
-    Requires Factorio ≥ 2.1.10. No bundled plugin declares the `LuaUdp` feature.
-  - `player_sync` gains per-instance `player_sync.sync_*` options, all defaulting to `true`
-    (unchanged behaviour), and `clusterioctl inventory-sync` tools; `research_sync` gains a
-    cluster research queue; `clusterioctl note` is new.
-  - External plugins using `@sinclair/typebox` should move to `^0.34` (upstream bumped it).
-  No entrypoint, build-script or interface changes: the config fields and CLI commands the
-  entrypoints use are unchanged (new fields and commands are additive). First pin: `2.0.3.r1`.
-- CI: tag builds create the GitHub Release once the pinned images are published, with the
-  top entry of this file as its notes (new `release` job; skips an existing release). No
-  image content change.
+- **Clusterio `2.0.3`** (from `2.0.2`). First pin: `2.0.3.r1`. No entrypoint or interface
+  changes. [Upstream notes](https://github.com/clusterio/clusterio/releases/tag/v2.0.3).
+  Relevant to these images:
+  - Fixes instances that start together corrupting a shared Factorio download
+    (clusterio#1105).
+  - Opt-in Lua UDP messaging (`factorio.enable_lua_udp`, `factorio.lua_udp_port`, default
+    off, Factorio ≥ 2.1.10). It binds localhost inside the host container, so there is no
+    port to publish.
+  - `player_sync` gains per-instance `player_sync.sync_*` options (default `true`) and
+    `clusterioctl inventory-sync` tools; `research_sync` gains a cluster research queue;
+    `clusterioctl note` is new.
+  - External plugins using `@sinclair/typebox` should move to `^0.34`.
+- CI: tag builds create the GitHub Release, with the top entry of this file as its notes.
 
 ## 2026-10-15
 
-- **Clusterio `2.0.2`** (from `2.0.1`) — upstream patch release. Web plugin
-  `controllerConnectionEvent` handlers receive the event name again (clusterio#1083);
-  installer fixes for plugin selection on Node 26 (clusterio#1082/#1084 — the installer is
-  not used by these images); documentation refresh. No entrypoint, build-script or interface
-  changes: the files the images depend on are identical between 2.0.1 and 2.0.2. Factorio
-  target unchanged (2.1 packs). First pin: `2.0.2.r1`.
+- **Clusterio `2.0.2`** (from `2.0.1`), an upstream patch release. Web plugin
+  `controllerConnectionEvent` handlers receive the event name again (clusterio#1083). No
+  entrypoint or interface changes. First pin: `2.0.2.r1`.
 
 ## 2026-10-14
 
-- **Clusterio `2.0.1`** (from `2.0.0-alpha.27`) — the first stable 2.0 line. Factorio target
-  unchanged (2.1 packs); the Node 24 base image already satisfies 2.0's Node ≥ 22. Upstream
-  notes: <https://github.com/clusterio/clusterio/releases/tag/v2.0.0> (and v2.0.1).
-- **Breaking (upstream rename): `inventory_sync` is now `player_sync`**
-  (`@clusterio/plugin-player_sync`; the old package has no 2.0 release). `CLUSTERIO_PLUGINS`
-  rejects `inventory_sync` with a hint. Seed `instance.json` fields are `player_sync.*`;
-  when `player_sync` is bundled, Clusterio migrates existing `inventory_sync.*` config
-  fields, permissions and data on load (the migration lives in the plugin).
-- **Breaking (upstream rename): keys inside `/clusterio/tokens/config-control.json` are
-  `ctl.controller_url` / `ctl.controller_token`** (were `control.*`). The filename is
-  unchanged. The controller rewrites an existing file's keys in place on boot (same token);
-  the host boot-race guard accepts either. Tooling that parsed `control.controller_token`
-  must read the new key (`tools/*.ps1` accept both).
-- **Breaking (upstream): `/metrics` requires a token** for a user holding
-  `core.controller.metrics` (401/403 otherwise). `scripts/prometheus.yml` documents the
-  role/user/token recipe and reads the token from a credentials file; its bogus
-  `clusterio-hosts` scrape job (hosts have no HTTP endpoint) is removed.
-- **Breaking (upstream): external plugins must be Clusterio 2.0 plugins** — ES modules whose
-  declared entrypoints carry the `.js` extension and export a default async function (class
-  plugins still load with a deprecation warning; a CommonJS `plugin` export is only detected
-  in the `module.exports = { plugin }` form). The CI fixture plugin is converted; see upstream
+- **Clusterio `2.0.1`** (from `2.0.0-alpha.27`), the first stable 2.0 line. Factorio target
+  unchanged (2.1 packs).
+  [Upstream notes](https://github.com/clusterio/clusterio/releases/tag/v2.0.0).
+- **Breaking: `inventory_sync` is now `player_sync`** (`@clusterio/plugin-player_sync`).
+  `CLUSTERIO_PLUGINS` rejects the old name. Seed `instance.json` fields are `player_sync.*`.
+  When `player_sync` is bundled, existing `inventory_sync.*` config, permissions and data
+  migrate on load.
+- **Breaking: the keys in `/clusterio/tokens/config-control.json` are `ctl.controller_url` /
+  `ctl.controller_token`** (were `control.*`). The filename is unchanged, and the controller
+  rewrites an existing file in place on boot (same token). Tooling that parsed
+  `control.controller_token` must read the new key (`tools/*.ps1` accept both).
+- **Breaking: `/metrics` requires a token** for a user holding `core.controller.metrics`
+  (401/403 otherwise). `scripts/prometheus.yml` documents the recipe. Its `clusterio-hosts`
+  scrape job is removed: hosts have no HTTP endpoint.
+- **Breaking: external plugins must be Clusterio 2.0 plugins**: ES modules whose declared
+  entrypoints carry the `.js` extension and export a default async function (class exports
+  still load, with a deprecation warning). See upstream
   `docs/devs/plugin-migration-to-2.0.md`.
-- Entrypoints create config files explicitly (`config create`): in 2.0 `config set`/`list`
-  against a missing file fail instead of initialising it. `create-ctl-config` writes the shared
-  ctl config directly (`--output`), and the entrypoint then pins its `ctl.controller_url` to
-  the loopback address — Clusterio bakes `controller.public_url` into it, which the controller
-  container itself may not reach (the host guard derives its own copy from `CONTROLLER_URL`).
-  The alpha dev-warning banner is gone upstream, so its build-time patch and the
-  `CLUSTERIO_SUPPRESS_DEV_WARNING` env var are removed.
-- Fix (pre-existing, not a 2.0 regression): `CONTROLLER_PUBLIC_ADDRESS` now sets
-  `controller.public_url`. The entrypoint set a nonexistent `controller.public_address`
-  field, which aborted the first run whenever the variable was set.
+- Entrypoints create config files explicitly (`config create`); in 2.0, `config set` against
+  a missing file fails. `CLUSTERIO_SUPPRESS_DEV_WARNING` is removed (the banner is gone
+  upstream).
+- Fix: `CONTROLLER_PUBLIC_ADDRESS` now sets `controller.public_url`. Setting it used to
+  abort the first run.
 
 ## 2026-09-30
 
-- The host removes stale lock files at startup, as the controller already did. The host
-  runs as PID 1, so a killed host left a lock naming PID 1, which is alive in every new
-  container: the host refused to start ("a valid lock file exists") until the file was
-  deleted by hand.
+- Hosts remove stale lock files at startup, as the controller already did. A killed host
+  refused to restart ("a valid lock file exists") until the file was deleted by hand.
 
 ## 2026-09-27
 
-- `docker stop` now shuts the controller and host down gracefully: both run the Clusterio
-  binary directly instead of through `npx`, which did not forward SIGTERM, so the controller
-  lost recent data and hosts killed instances without saving. Compose allows 30s/120s to stop.
+- `docker stop` shuts the controller and hosts down gracefully. Both now run the Clusterio
+  binary directly instead of through `npx`, which did not forward SIGTERM. Compose allows
+  30s / 120s to stop.
 
 ## 2026-09-10
 
-- Reconcile explicit host token, controller URL and port overrides without deleting
-  saved configuration. Preserve saved identity; read readiness identity/address after hooks.
-  Native configuration writes are verified together with one final read.
-- Persist controller mods, exported assets and logs in Compose; existing deployments
-  must migrate container directories before recreating. No automatic migration is performed.
-- Extend native acceptance with restart/configuration conflicts and prior-image state,
-  selected plugins, shared-dependency checks and bounded diagnostics. Publication tests
-  its loaded release/custom candidates and pushes those same images without rebuilding.
-
-- Host restart reads use the supported native CLI and report failures instead of
-  treating them as missing configuration. Readiness matches host ID, so a saved
-  display name differing from HOST_NAME does not block health.
-- Add pre-start hooks after local configuration/bootstrap, running as clusterio
-  on every boot. Hook failures stop startup.
-- Release builds can select all, none or a subset of bundled plugins. Existing
-  defaults and version pins are unchanged.
-- Add offline native CLI checks and disposable packaged-consumer startup,
-  recreation, persistent-store and failing-hook acceptance before image publication.
+- **Compose persists controller mods, exported assets and logs in volumes. Existing
+  deployments must migrate those container directories before recreating; there is no
+  automatic migration.**
+- Host token, controller URL and port overrides are reconciled without deleting saved
+  configuration; saved identity is preserved.
+- Pre-start hooks: scripts in `/etc/clusterio/pre-start.d` run as `clusterio` on every boot,
+  after local configuration. A failing hook stops startup.
+- Release builds can bundle all, none or a subset of plugins (`CLUSTERIO_PLUGINS`). Defaults
+  are unchanged.
+- Host readiness matches the host ID, so a saved display name that differs from `HOST_NAME`
+  no longer blocks health. Unreadable configuration is reported instead of treated as
+  missing.
+- CI: publication tests the exact images it then pushes.
 
 ## 2026-09-06
 
-- Mod seeding now adds only the highest numeric version of each exact mod name to
-  the default pack. All seed archives are still uploaded. Duplicate versions such
-  as `1.9.0` and `1.10.0` no longer let filename ordering select the older release.
-  Clusterio and Factorio version pins are unchanged.
+- Mod seeding adds only the highest numeric version of each mod to the default pack, so
+  `1.10.0` beats `1.9.0`. All seed archives are still uploaded.
 
 ## 2026-09-04
 
-- **Runtime game-client download now resumes instead of restarting from byte 0.**
-  `host-entrypoint.sh` replaces `curl --retry 8` with an explicit `-C -` resume loop
-  (30 attempts, exit-33 partials discarded); observed on a consumer cluster: a link
-  dropping every ~800 MB made the 4.2 GB Factorio 2.1.17 client download restart forever.
-
-- **Revision-pin separator changed from `-rN` to `.rN` (e.g. `2.0.0-alpha.27.r1`, not
-  `2.0.0-alpha.27-r1`).** A hyphen makes `27-r1` a single alphanumeric SemVer prerelease
-  identifier; SemVer precedence ranks alphanumeric identifiers above purely-numeric ones at the
-  same field position, so `2.0.0-alpha.27-r1` would sort as *newer* than `2.0.0-alpha.28` under
-  SemVer-aware tooling (Renovate, Dependabot, etc.). `.rN` keeps the revision a separate
-  dot-delimited identifier, so numeric comparison on the Clusterio version field still wins first.
-  Updated: `.github/workflows/docker-build.yml` tag trigger/assert, `README.md`, `CLAUDE.md`,
-  `docs/consumer-integration.md`, `CONTRIBUTING.md`, `.env.example`, `docker-compose.yml`.
-  - **Correction**: an earlier version of this entry claimed no `-rN` tag had ever been published.
-    That was wrong — `2.0.0-alpha.27-r1` through `-r4` (cut 2026-07-22 through 2026-08-15) are
-    already live on GHCR under the old hyphen scheme. Those four are frozen as-is (not deleted —
-    deleting a published pin breaks anyone already using it); do not cut any more `-rN` tags.
-    `2.0.0-alpha.27.r5` is the next revision pin under the corrected scheme.
-- **Refreshed pinned `NODE_IMAGE` digest** (`node:24-bookworm-slim`) from a 2026-01-14 build to the
-  current 2026-08-27 build for Debian/Node security patches. Clusterio stays `2.0.0-alpha.27` (already
-  matched npm `latest`; no bump needed).
+- The runtime game-client download resumes instead of restarting from byte 0 (up to 30
+  attempts).
+- **Revision pins use `.rN`, not `-rN`** (e.g. `2.0.0-alpha.27.r5`). SemVer-aware tooling
+  ranked `2.0.0-alpha.27-r1` above `2.0.0-alpha.28`. The published `-r1` to `-r4` pins stay
+  as they are; no more `-rN` tags are cut.
+- `NODE_IMAGE` digest refreshed to the 2026-08-27 build of `node:24-bookworm-slim`.
 
 ## 2026-08-15
 
-- **Instance seeding applies `instance.json` before `instance assign`, not after.** Config pushed
-  to an already-assigned instance reaches its host with `notify=true` and can fault a host that is
-  starting that instance; while the instance is unassigned there is no host to push to, and assign
-  then delivers the finished config once. New `tests/seed-instances-order.test.sh` pins the order
-  in the `gates` job, and `SEED_DATA_DIR` is overridable (default unchanged) so it can run against
-  a fixture tree. Clusterio stays `2.0.0-alpha.27`.
+- Instance seeding applies `instance.json` before `instance assign`. Config pushed to an
+  already-assigned instance could fault a host that was starting it. `SEED_DATA_DIR` is
+  overridable (default unchanged).
 
 ## 2026-07-26
 
-- **Publishing is now gated on the integration suite.** `build` pushed to GHCR while `test` ran
-  after it, so a red integration run did not stop `:latest` and the version tag from moving — on
-  2026-07-23 exactly that happened (`build` green and published, `test` failed on the restart
-  check, `main` left red with the images already out).
-  - `test` never consumed `build`'s output — it builds its own images from the same source — so
-    the dependency was pure sequencing. It now depends on the gates instead, and `build`
-    (the publisher) depends on `[gates, test]`.
-  - The cheap assertions moved into a new **`gates`** job: changelog gate, version-reference
-    assert, revision-pin assert. Without this they would have run *after* the 3-minute suite,
-    turning a 20-second "stale CHANGELOG" answer into a slow one.
-  - Wall clock is roughly unchanged — the pipeline was already serial (`build` → `test`); it is
-    now `gates` → `test` → `build`, adding only the ~20s gates job.
-  - Tag (`-rN` pin) builds are now gated on the suite too, which they previously were not.
-- No image content change — CI ordering only. Clusterio stays `2.0.0-alpha.27`.
-- **Client-secret reads strip CR.** `$(cat)` already drops trailing newlines, so the LF case was
-  never broken — but on the Linux builder a `--secret id=…,src=<file>` secret authored on Windows
-  is CRLF, and the surviving carriage return would ride into the download URL's query string as `%0D`. Found
-  reviewing #42 post-merge.
-- **Instance seeding no longer discards its own error messages.** `instance create`, `instance
-  assign` and `save upload` each ran as `… 2>/dev/null || true`, throwing away both the exit
-  status and the diagnostic. A failed create then let assign, upload and start run against an
-  instance that did not exist — each swallowing too — so the only symptom was the 120s start-loop
-  timeout, long after the real error was gone.
-  - New `ctl_seed` helper captures stderr and prints it under an `ERROR:` line naming the
-    operation. Table output on stdout is still dropped; only the error text is kept.
-  - A failed **create** or **assign** now skips the rest of that instance instead of operating on
-    something that isn't there. Other instances still seed — one bad entry must not strand the
-    cluster.
-  - A failed **save upload** no longer auto-starts the instance. It previously started on a fresh
-    map under the intended name: a silently wrong world that looks healthy. It is now left
-    stopped with an explanation.
-  - A malformed `instance.json` no longer falls through silently to `auto_start=true`; the parse
-    error is printed and the default is stated.
-  - Seeding exits non-zero when anything failed, and the controller then **withholds
-    `.seed-complete`** so the next start retries. It deliberately stays up and healthy: aborting
-    would restart-loop the container on a permanently bad `instance.json`, and marking the
-    controller unhealthy would block hosts (they gate on controller health), turning a partial
-    seeding failure into a dead cluster.
+- **Publishing is gated on the integration suite.** Images, revision pins included, no
+  longer publish when the suite fails.
+- **Instance seeding reports its errors and stops acting on failed steps.**
+  - A failed create or assign skips the rest of that instance; other instances still seed.
+  - A failed save upload leaves the instance stopped instead of starting it on a fresh map.
+  - A malformed `instance.json` is reported instead of silently defaulting.
+  - When anything fails, `.seed-complete` is withheld so the next start retries. The
+    controller stays up and healthy.
+- Build-time client secrets have carriage returns stripped; a CRLF secret file corrupted
+  the download URL.
 
 ## 2026-07-25
 
-- **CI version-assert gate widened to all three files the release process names.** The step
-  checked `README.md` alone, while Release Process step 1 (`CLAUDE.md`) promises `README.md`,
-  `CLAUDE.md` **and** `docs/consumer-integration.md` are gated. A `CLUSTERIO_VERSION` bump could
-  therefore leave the consumer-facing tag table in `docs/consumer-integration.md` stale with CI
-  green — the file downstream consumers are pointed at for image tags. Now loops all three,
-  reports *every* stale file rather than dying on the first, and matches with `grep -F` so the
-  dots in e.g. `2.0.0-alpha.27` are literal instead of regex wildcards.
-- **Empty-version guard on the same gate.** `grep -F ""` matches every line, so if the `sed` that
-  reads `ARG CLUSTERIO_VERSION` from `Dockerfile.host` ever resolved empty (ARG line reformatted,
-  quoted, or left without a default) the gate passed green while asserting nothing — and the same
-  value feeds the published image tag. Now fails loudly on an empty resolve.
-- **Workflow inputs moved from `${{ }}` splicing into `env:`** (`docker-build.yml`,
-  `cache-cleanup.yml`). Values interpolated directly into a `run:` body are shell, not data.
-  Two are attacker-reachable: `CLUSTERIO_VERSION` is read from `Dockerfile.host` (a fork PR can
-  edit it) and `github.event.pull_request.head.ref` is a PR author's branch name (git permits `$`,
-  backticks and `(` in refs). Same for `github.sha`, `github.ref_name`, `github.repository`.
-- Cache cleanup: a failed cache delete logged nothing (`|| true`); it now emits a `WARN` line.
-- **BREAKING (build interface): `FACTORIO_CLIENT_USERNAME` / `FACTORIO_CLIENT_TOKEN` build args
-  removed — Factorio.com credentials are now BuildKit secrets** (pitfall #8 closed at the source
-  rather than documented around). `--build-arg` values are readable via `docker history`, and the
-  `ARG` declaration alone tripped Docker's `SecretsUsedInArgOrEnv` lint on every host build.
-  `Dockerfile.host` now mounts `factorio_username` / `factorio_token` at `/run/secrets/*` — a
-  tmpfs discarded when the `RUN` ends, so no value reaches a layer.
+- **Breaking (build interface): the `FACTORIO_CLIENT_USERNAME` / `FACTORIO_CLIENT_TOKEN`
+  build args are removed; credentials are BuildKit secrets.** `--build-arg` values are
+  readable via `docker history`.
   - Migration: `docker build --build-arg INSTALL_FACTORIO_CLIENT=true --secret
     id=factorio_username,env=FACTORIO_USERNAME --secret id=factorio_token,env=FACTORIO_TOKEN .`
     Via compose, uncomment host-1's `secrets:` block in `docker-compose.dev.yml`.
-  - Passing the old build args now has **no effect**; a client build without secrets fails with
-    the migration command in the error. Builds that do not set `INSTALL_FACTORIO_CLIENT=true`
-    are unaffected.
-  - `Dockerfile.host` line 1 is now `# syntax=docker/dockerfile:1` (required for the secret
-    mounts, and only honoured as the very first line).
-  - Verified: `docker build --check` reports no warnings; a default build succeeds; a client build
-    without secrets fails with the guidance; no credential assignment appears in `docker history`.
-- No image *content* change — the published images never took the build-time client path (CI
-  passes only `CLUSTERIO_TARGET` and `BUILD_REVISION`). Clusterio stays `2.0.0-alpha.27`.
-- **Cluster-token hygiene on the shared-tokens volume.** `config-control.json` is a cluster-ADMIN
-  credential (its role holds `core.admin`, a wildcard over all 85 permissions) and every host
-  mounts it, so its file mode is a real blast-radius control.
-  - Token files are now created `0600` and explicitly `chown clusterio:clusterio` instead of
-    `0644`. The chown is load-bearing: hosts read them as uid 1001 over the shared volume, and a
-    root-owned `0600` file would lock every host out. Both images use uid 1001.
-  - The boot-race guard's derived copy (`/clusterio/data/.guard-control.json`) is `0600` and now
-    **removed on every guard exit path**. It previously persisted on the host's data volume
-    indefinitely — found on a live host dated weeks after creation — leaving an admin credential
-    on a volume that outlives the tokens mount.
-  - The guard emits `derived control config removed` *after* the unlink, so waiting on it is a
-    real barrier; the pre-existing `complete` line is logged before cleanup and would race.
-  - CI asserts all three: mode/owner on every shared token, that host-1 can still read its token
-    as `clusterio` (catching an over-tightening that would pass a mode check but break the
-    cluster), and that the derived copy is gone.
-  - `SECURITY.md` documents the trust boundary: an untrusted external plugin on any host is one
-    file read away from cluster admin. Not changed here — scoping that credential to a
-    least-privilege role is the real fix and is a separate design change.
+  - The old build args have no effect, and a client build without secrets fails with the
+    migration command. Builds without `INSTALL_FACTORIO_CLIENT=true` are unaffected.
+  - `Dockerfile.host` line 1 must stay `# syntax=docker/dockerfile:1`.
+- **Token files on the shared-tokens volume are `0600`, owned by `clusterio` (uid 1001)**;
+  they were `0644`. `config-control.json` is a cluster-admin credential and every host
+  mounts it. The boot-race guard's derived copy (`/clusterio/data/.guard-control.json`) is
+  `0600` and removed on every exit path; it used to persist on the host data volume.
+- CI: the version-assert gate checks `README.md`, `CLAUDE.md` and
+  `docs/consumer-integration.md` and fails on an empty version; workflow inputs reach
+  scripts through `env:` instead of `${{ }}` splicing.
 
 ## 2026-07-22
 
-- **Clusterio `2.0.0-alpha.26` → `2.0.0-alpha.27`** (`CLUSTERIO_VERSION`, both Dockerfiles).
-  npm alpha.27 upstreams the Factorio 2.1 support the fork carried (`ApiVersions` `2.1`, Base
-  Game/Space Age 2.1 default packs, `clusterio_lib` 2.1 variant v2.0.21, the `recycler` builtin
-  alpha.26 lacked). CI proved it end-to-end on the `release` target.
-- **`main` un-parked — it is again the default/active line, built from `release` (npm).**
-  `:latest` + the Clusterio version tag now publish from **release/npm** alpha.27 (were custom/fork
-  builds from `factorio-2.1.8`). The `custom`/fork machinery is **retained but dormant** — kept for
-  a future Factorio line that npm may lag (branch `factorio-<X.Y>` off `main`); `factorio-2.1.8` is
-  archived. `BUILD_INFO.clusterioTarget` records which target built any image.
-- **Versioning tracks the Clusterio version + a docker `-rN` revision; the independent repo SemVer
-  is retired.** Images tag as `:<clusterio-version>` (moves) and `:<clusterio-version>-rN`
-  (immutable pin, cut from a git tag `2.0.0-alpha.27-rN`). CI: `v*`/`type=semver` tag handling
-  replaced by `type=ref,event=tag` + a guard that a revision tag matches the baked
-  `CLUSTERIO_VERSION`.
-- **`docker-compose.yml`**: default image tag `${CLUSTERIO_IMAGE_TAG:-factorio-2.1.8}` →
-  `:-latest`, so an unconfigured `docker compose up` pulls the new npm-based default instead of the
-  fork build. `.env.example` pin examples updated to the `-rN` scheme.
+- **Clusterio `2.0.0-alpha.27`** (from `2.0.0-alpha.26`). npm alpha.27 carries the Factorio
+  2.1 support the fork carried: the 2.1 API version, the Base Game / Space Age 2.1 default
+  packs and the `recycler` builtin.
+- **`main` is the active line again, built from the `release` (npm) target.** `:latest` and
+  the Clusterio version tag publish from it; they were fork builds from `factorio-2.1.8`,
+  now archived. The `custom`/fork build path is kept but dormant.
+- **Versioning tracks the Clusterio version plus a docker revision.**
+  `:<clusterio-version>` moves; `:<clusterio-version>-rN` is the immutable pin, cut from a
+  git tag. The separate repo SemVer (`v*` tags) is retired.
+- `docker-compose.yml` defaults to the `latest` image tag (was `factorio-2.1.8`).
 
 ## 2026-07-06
 
-- CI only (no image content change): added silent-degradation tripwires — asserts the
-  static-cache patch actually attached and `/static` serves with revalidation (a Clusterio
-  bump can remove the protection with no error), asserts `BUILD_INFO.clusterioTarget`
-  matches the target CI built, and asserts each host derived its non-overlapping game-port
-  range from `HOST_ID` (host N → `34N00-34N99`).
-- CI: external-plugin lifecycle test — a committed fixture plugin
-  (`seed-data/external_plugins/ci_fixture`) proves npm install, the `@clusterio` dedup
-  strip (pitfall 10), keyword-gated auto-discovery (`clusterio-plugin` in `keywords` is
-  load-bearing — without it a plugin installs and silently never loads), and the plugin's
-  controller code actually running on a fresh cluster.
-- CI: buildx cache hygiene — per-image cache scopes (controller/host no longer evict each
-  other's layers) and a cleanup workflow that deletes a PR's caches when it closes.
-- **Fix: external-plugin npm install on custom-target images** — `/clusterio` is the pnpm
-  monorepo and its root `package.json` claims `external_plugins/*` as a workspace, so a bare
-  `npm install` in a mounted plugin dir operated on the whole monorepo and died on pnpm's
-  `catalog:` protocol. Every external-plugin install on custom images failed (masked by the
-  warn-and-continue). `install-plugins.sh` now passes `--workspaces=false`; the new
-  ci_fixture lifecycle test caught this on its first run.
+- Fix: external-plugin `npm install` on custom-target images. `/clusterio` is a pnpm
+  workspace there, so the install failed for every external plugin. `install-plugins.sh`
+  now passes `--workspaces=false`.
+- CI: asserts the static-cache patch attached, `BUILD_INFO.clusterioTarget` and the per-host
+  game-port ranges; adds an external-plugin lifecycle test with a fixture plugin
+  (`seed-data/external_plugins/ci_fixture`; the `clusterio-plugin` keyword is required for
+  a plugin to load); per-image build caches, deleted when a PR closes.
 
 ## 2026-07-05
 
-- CI: absorbed `main`'s Node-24 Actions bump (checkout@v6, buildx@v4,
-  login@v4, metadata@v6, build-push@v7) — kills the deprecation warnings on
-  every run; `main` now holds nothing the active line lacks. No image content
-  change.
-- **Default branch flipped `main` → `factorio-2.1.8`** (publishing-semantics
-  change, no code change): the repo's face (README, issue templates, this
-  file) is now the active line, and `latest` + the Clusterio version tag
-  publish from its **custom** (fork) builds — `BUILD_INFO.clusterioTarget`
-  records which target built any image. `main` is parked as the npm-release
-  line until the npm release supports Factorio 2.1 (alpha.26 provably
-  doesn't). Branch model documented in README + CONTRIBUTING.
-- **Observability: plugin logs stream to stdout** — the on-disk cluster/host
-  JSON logs (where Clusterio routes all plugin logger output, invisible in
-  `docker logs`) are now mirrored to container stdout with a `[cluster-log]`
-  prefix (`CLUSTERIO_LOG_TO_STDOUT`, default true; daily rollover handled).
-  CI asserts the payoff.
-- **Honest readiness** — controller healthcheck now also requires the
-  entrypoint's steady-state marker (healthy = seeded, kills the double
-  `up -d`); host healthcheck now requires the boot-race guard's connected
-  marker when the tokens volume is present (healthy = connected; degrades to
-  process-only standalone); the seeder's `instance start` is a retrying,
-  loud-on-failure loop instead of a swallowed one-shot.
-- Controller: **static-cache patch absorbed** — `/static`'s `immutable, 1y`
-  headers pinned stale web-UI chunks on returning browsers; the controller now
-  flips them to revalidation at startup (opt out with
-  `CONTROLLER_STATIC_CACHE_MODE=immutable`; graceful no-op if core fixes it
-  upstream). Deletes a production consumer's boot-time monkeypatch.
-- Export-data hardening: `scripts/regenerate-export-data.sh` (the documented
-  post-version-bump step, with retries); host startup WARNING when
-  `SKIP_CLIENT=true` on the `EXPORT_HOST`-designated host (blank-icon
-  contradiction made visible at the source).
-- Plugin docs: `.npmrc legacy-peer-deps` requirement + the two proven
-  workstation build patterns; clarified the per-boot `@clusterio` strip.
-- **Multi-cluster support**: host-side port publishings (`HOST1_PORTS`,
-  `HOST2_PORTS`) and the external client volume name (`FACTORIO_CLIENT_VOLUME`)
-  are now `.env`-parametrized; new `docs/multi-cluster.md` documents the four
-  collision surfaces. `auto_pause` foot-gun surfaced: docs + example fixed
-  (`false`), seeder logs an INFO when unset. README troubleshooting adds the
-  frozen-plugins entry and the `DEFAULT_MOD_PACK` live-reassign path.
-- CI: **factorio-* PRs now build the custom target** from the fork branch
-  matching the PR base — the npm release lags the fork's Factorio-version
-  support (empirically: alpha.26 rejects 2.1-format mod `info.json` and lacks
-  the `recycler` builtin), so release-target PR runs failed mod seeding on
-  content the merge would actually ship. PR validation is now faithful.
-- CI: **pre-merge validation for release-branch PRs** — `pull_request` now also
-  triggers on PRs into `factorio-*` branches (build + full test suite, no image
-  push). The `'*'` push filter's no-slash behavior is now documented as
-  intentional in CONTRIBUTING. Issue templates added (`.github/ISSUE_TEMPLATE`)
-  codifying the Problem/Evidence/Acceptance format.
-- Controller entrypoint: DLC-mod enabling is now **non-fatal but loud** — a
-  core without one of the builtins (e.g. `recycler` on pre-alpha.26) previously
-  crash-looped the whole controller under `set -e`; now it logs a WARNING and
-  the cluster comes up (pack fixable via `mod-pack edit`).
-- Host entrypoint: **boot-race guard** — once the controller reports the host
-  connected, any instance that auto-started *before* the handshake
-  (`startedAtMs` < handshake time) is restarted once so its plugins register.
-  Mechanizes the manual stop/start protocol; surgical no-op on healthy boots;
-  skips quietly on standalone hosts without the shared tokens volume. CI now
-  asserts the guard completes on both hosts after a full-stack restart.
-  Upstream fix (loud failure in Clusterio core) tracked separately.
-- CI: **changelog gate** (this file) — image-affecting pushes without a change
-  notice now fail the build; top entry is published to every run summary.
-- Consumer-first compose: `docker compose up -d` now **pulls prebuilt GHCR
-  images** (`CLUSTERIO_IMAGE_TAG`, default `factorio-2.1.8`); source builds
-  moved to the `docker-compose.dev.yml` overlay, `CLUSTERIO_TARGET` default
-  flipped custom → release. (#13)
-- Dual-axis immutable tag published on every push build:
-  `<branch>-clusterio-<version>` (e.g. `factorio-2.1.8-clusterio-2.0.0-alpha.26`);
-  `io.clusterio.version` OCI label; `/clusterio/BUILD_INFO` provenance file in
-  both images. (#13)
-- Entrypoint: `recycler` added to the Space Age DLC enable list — space-age +
-  quality hard-depend on it in Factorio 2.1.x. (#13)
-- README: consume-don't-build callout (incl. agents/automation directive),
-  tag/provenance docs, external-plugin install contract, boot-race +
-  require-cache operational notes; CI-verified Clusterio version badge. (#13)
+- **Plugin logs stream to stdout.** The on-disk cluster/host logs are mirrored to container
+  stdout with a `[cluster-log]` prefix (`CLUSTERIO_LOG_TO_STDOUT`, default `true`).
+- **Healthy means ready.** The controller is healthy once seeding is complete; a host is
+  healthy once connected to the controller (process-only when standalone). The seeder's
+  `instance start` retries and fails loudly.
+- **Static-cache patch.** `/static` is served with revalidation instead of `immutable, 1y`,
+  which pinned stale web-UI chunks in returning browsers. Opt out with
+  `CONTROLLER_STATIC_CACHE_MODE=immutable`.
+- **Boot-race guard.** Once a host is connected, any instance that auto-started before the
+  handshake is restarted once so its plugins register. Skipped on standalone hosts without
+  the shared tokens volume.
+- **Compose pulls prebuilt images** (`CLUSTERIO_IMAGE_TAG`). Source builds moved to the
+  `docker-compose.dev.yml` overlay, and `CLUSTERIO_TARGET` defaults to `release`. (#13)
+- **Multi-cluster.** Host port publishings (`HOST1_PORTS`, `HOST2_PORTS`) and the client
+  volume name (`FACTORIO_CLIENT_VOLUME`) are set in `.env`. See `docs/multi-cluster.md`.
+- `scripts/regenerate-export-data.sh` added, to run after a Factorio version bump. The host
+  warns at startup when `SKIP_CLIENT=true` on the `EXPORT_HOST` host.
+- Space Age packs enable `recycler`; space-age and quality depend on it in Factorio 2.1.x.
+  A core missing a DLC builtin logs a WARNING instead of crash-looping the controller. (#13)
+- Images carry `/clusterio/BUILD_INFO` and the `io.clusterio.version` label. Each push build
+  also publishes `<branch>-clusterio-<version>`. (#13)
+- The default branch is `factorio-2.1.8`; `latest` and the version tag publish from its
+  custom (fork) builds until npm supports Factorio 2.1.
+- CI: changelog gate (this file); PRs into `factorio-*` branches build and test the custom
+  target; Actions moved to their Node 24 majors.
+- Docs: `.npmrc legacy-peer-deps` requirement for plugins, `auto_pause` example set to
+  `false`, README troubleshooting additions.
 
 ## 2026-06-22
 
-- Bumped bundled Clusterio to **2.0.0-alpha.26** (all `@clusterio/*` packages,
-  release target).
+- **Clusterio `2.0.0-alpha.26`** (all `@clusterio/*` packages, release target).
 
 ## 2026-06 (earlier)
 
 - Target **Factorio 2.1.8**; CI asserts the default mod pack is "Space Age 2.1".
-- Host logs installed Factorio version(s) at startup (#8); plugin-build failure
-  WARNING routed to stderr instead of being swallowed (#10).
+- Hosts log the installed Factorio version(s) at startup (#8); a plugin-build failure
+  WARNING goes to stderr instead of being swallowed (#10).

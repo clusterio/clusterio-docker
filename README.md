@@ -246,7 +246,7 @@ docker run -d -p 34100-34199:34100-34199/udp \
 | `DEFAULT_FACTORIO_VERSION` | `2.1` | Factorio version used when creating a new mod pack (only applies when `DEFAULT_MOD_PACK` doesn't match an existing pack) |
 | `FACTORIO_USERNAME` | *(unset)* | Factorio account username (for mod portal & multiplayer) |
 | `FACTORIO_TOKEN` | *(unset)* | Factorio account token from [factorio.com/profile](https://factorio.com/profile) |
-| `EXPORT_HOST` | `1` (compose) / `0` (skip) | Host ID whose instance runs `export-data` (web-UI icons/prototypes) during first-run seeding — that host needs the game client. See [Asset Export](docs/asset-export.md). |
+| `EXPORT_HOST` | `1` (compose) / `0` (skip) | Host ID whose instance runs `export-data` (web-UI icons/prototypes) during first-run seeding — that host needs the game client for icons (a headless host exports with blank icons). See [Asset Export](docs/asset-export.md). |
 | `CONTROLLER_STATIC_CACHE_MODE` | `revalidate` | `/static` cache headers: `revalidate` (default — non-hashed web-UI assets stay fresh across upgrades) or `immutable` (stock Clusterio behavior) |
 | `CLUSTERIO_LOG_TO_STDOUT` | `true` | Mirror the on-disk cluster/host logs (plugin logger output) to container stdout with a `[cluster-log]` prefix |
 

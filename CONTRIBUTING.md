@@ -62,4 +62,4 @@ the images.
   `docker-compose*.yml`, workflows) must include a `CHANGELOG.md` entry — CI's
   **changelog gate** fails the push build without one, and the top entry is
   published to the build's run summary.
-- Don't commit secrets — see [SECURITY.md](SECURITY.md).
+- Don't commit secrets — `.env` is gitignored; only `.env.example` is tracked.

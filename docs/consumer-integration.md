@@ -6,9 +6,9 @@ How to use clusterio-docker images in a downstream project.
 
 | Tag | Source | Use Case |
 |-----|--------|----------|
-| `latest` / `main` | npm registry (`@clusterio/*`), pinned to **`2.1.1`** — **moves** as the docker layer rebuilds | Stable, published Clusterio (newest) |
-| `2.1.1` | Same as `latest` — the bundled Clusterio version; **moves** on rebuild | Track a Clusterio version |
-| `2.1.1.rN` | An **immutable** revision pin (cut from a git tag); `.rN` bumps for docker-layer fixes on the same Clusterio version | **Production — pin this** |
+| `latest` / `main` | npm registry (`@clusterio/*`), pinned to **`2.1.2`** — **moves** as the docker layer rebuilds | Stable, published Clusterio (newest) |
+| `2.1.2` | Same as `latest` — the bundled Clusterio version; **moves** on rebuild | Track a Clusterio version |
+| `2.1.2.rN` | An **immutable** revision pin (cut from a git tag); `.rN` bumps for docker-layer fixes on the same Clusterio version | **Production — pin this** |
 | `<branch>` | Built from fork branch `solarcloud7/clusterio:<branch>` on a **non-main branch push** (falls back to the fork's default branch, `master`). PRs into `main`, `main`, and tags build the `release` target. | Dormant `custom`/fork path (a `factorio-*` line when npm lags a new Factorio version) |
 
 ```yaml
@@ -31,7 +31,7 @@ image: ghcr.io/clusterio/clusterio-docker-host:latest
 
 > **Migrating off old `:1` / `:1.x` / `:1.x.y` tags:** the independent repo-SemVer tag axis
 > is **retired** — those tags are frozen at their last build and receive **no** further
-> updates. Re-pin to `:<version>.rN` (e.g. `:2.1.1.r1`).
+> updates. Re-pin to `:<version>.rN` (e.g. `:2.1.2.r1`).
 
 > **Migrating off `:2.0.0-alpha.27-r1` .. `-r4` (hyphen scheme):** these four were published
 > before a SemVer-precedence bug in the separator was caught (a hyphen makes `27-r1` sort as
@@ -308,10 +308,28 @@ the old container directories; a container's writable layer is not persistent st
 
 The PR does not perform this migration on a running installation.
 
+## Upgrading from 2.1.1
+
+Images from `2.1.2` (first pin `2.1.2.r1`) bundle Clusterio 2.1.2. Change the tag on the
+controller and every host and recreate the containers (`docker compose up -d`); there is no
+migration step. Details in `CHANGELOG.md` (the Clusterio `2.1.2` entry). Check three things:
+
+- **Slow links.** The controller closes an upload or download that moves less than about
+  1.8 MiB in a minute (about 30 KiB/s); on 2.1.1 the limit was 30 KiB in 30 seconds. The
+  setting is `controller.transfer_min_speed` (KiB/s, default `64`, `0` for no limit) and
+  replaces `controller.transfer_min_progress`. A saved value is converted on load; a script
+  or hook that still sets the old key changes nothing and gets no failing exit code.
+- **External plugins.** Plugins load concurrently, so one that relied on plugin list order
+  must wait for the other plugin (`plugins.waitFor`). See
+  [plugin-development.md](plugin-development.md) for the other API changes.
+- **Log directories.** The `.*-audit.json` files are no longer used and can be deleted.
+
+Coming from `2.0.3`: follow the next section and pin `2.1.2.r1` directly.
+
 ## Upgrading from 2.0.3
 
 Images from `2.1.1` (first pin `2.1.1.r1`) bundle Clusterio 2.1. Details in `CHANGELOG.md`
-(2026-11-22). Below, `ctl` stands for
+(the Clusterio `2.1.1` entry). Below, `ctl` stands for
 `docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json`,
 run on the controller's machine. Steps, in order:
 
@@ -345,7 +363,7 @@ run on the controller's machine. Steps, in order:
    `--output json` instead of tables. Replace any use of `host generate-token`,
    `host revoke-token`, `host create-config` or `bootstrap generate-host-token`: they are
    removed.
-5. **Upgrade the controller and every host together**: pin both images to `:2.1.1.r1`, then
+5. **Upgrade the controller and every host together**: pin both images to `:2.1.2.r1`, then
    recreate the cluster (`docker compose up -d`). Let the controller stop gracefully (it saves
    its database on a graceful stop and every 60 s).
 6. **Check the result.** `ctl host list` shows every host connected. Hosts that had

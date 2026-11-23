@@ -13,6 +13,41 @@ images and what they must do. State the Clusterio / Factorio versions when they 
 
 ## 2026-11-22
 
+- **Clusterio `2.1.2`** (from `2.1.1`). First pin: `2.1.2.r1`. Node `24.22.3`, the Factorio
+  2.1 target and the entrypoints are unchanged. Upstream notes: the 2.1.2 section of
+  Clusterio's `CHANGELOG.md`. From a `2.1.1` image: change the tag on the controller and
+  every host and recreate the containers; there is no migration step. **From `2.0.3` or
+  older, the breaking changes are in the Clusterio `2.1.1` entry below**: follow
+  `docs/consumer-integration.md` "Upgrading from 2.0.3" and pin `2.1.2.r1` directly.
+- **Slow uploads and downloads are closed sooner.** `controller.transfer_min_progress` (KiB
+  per 30 seconds, default 30) is replaced by `controller.transfer_min_speed` (KiB/s, default
+  `64`, `0` for no limit). With the defaults the controller now closes a transfer that moves
+  less than about 1.8 MiB in a minute (about 30 KiB/s); before, the limit was 30 KiB in 30
+  seconds. This covers save, mod and export uploads and downloads through the controller. A
+  saved value other than the old default is converted on load (`300` becomes `10`). For slow
+  links, lower it or set `0`: `clusterioctl controller config set
+  controller.transfer_min_speed <KiB/s>`.
+  - A script or pre-start hook that still sets `controller.transfer_min_progress` changes
+    nothing: the CLI prints `No field named 'controller.transfer_min_progress'` and exits 0.
+- **External plugins: plugins load concurrently**, no longer one at a time in plugin list
+  order. A plugin that needs another one loaded first waits for it with `plugins.waitFor`.
+  `lib.ZipArchive.zipfile` is private (use `openStream` / `openRawStream`),
+  `ModInfo.fromModFile` is `ModStore.readModInfo`, and `@clusterio/lib` no longer brings in
+  `@types/node` (`docs/plugin-development.md`).
+- **Logs.** Clusterio writes its log files itself now (winston-daily-rotate-file is gone).
+  File names are the same, and `[cluster-log]` lines still reach `docker logs`. The
+  `.*-audit.json` files in the log directories are no longer used and can be deleted.
+- New instance options, off by default: `instance.restart_after_crash` restarts an instance
+  that crashes after running for at least 10 minutes, up to `instance.crash_retry_attempts`
+  (`3`) times. Both can be seeded through `instance.json` (`docs/seed-data.md`).
+- **Tests and CI.** `PREVIOUS_HOST_IMAGE` and `PREVIOUS_CONTROLLER_IMAGE` are the `2.1.1.r1`
+  digests, so CI's upgrade cases cross `2.1.1` → `2.1.2`. The `cluster-upgrade` case reads
+  the host id from the token and the previous controller's Clusterio version from its
+  `BUILD_INFO`, so it runs from a 2.1 cluster (both token files kept) as well as a 2.0.3
+  one (the never-connected host's token replaced). CI no longer runs the `2.0.3` boundary.
+
+## 2026-11-22
+
 - **Clusterio `2.1.1`** (from `2.0.3`). First pin: `2.1.1.r1`. Node `24.22.3` and the
   Factorio 2.1 target are unchanged. Upstream notes: the 2.1.0 and 2.1.1 sections of
   Clusterio's `CHANGELOG.md`. Upgrade the controller and every host together. Steps:

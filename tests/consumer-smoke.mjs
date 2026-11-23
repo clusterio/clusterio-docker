@@ -372,19 +372,31 @@ try {
       "-v",up+"-host-data:/clusterio/data","-v",up+"-host-logs:/clusterio/logs","-v",up+"-controller-tokens:/clusterio/tokens:ro"];
     create(upCtl,previous.controller,upCtlArgs);docker("start",upCtl);await health(upCtl);
     create(upHost,previous.host,upHostArgs);docker("start",upHost);await health(upHost);
-    controlOn(upCtl,"instance","create","kept");controlOn(upCtl,"instance","assign","kept","1");
     const before=[token(1,upCtl),token(2,upCtl)];
+    // The id the previous controller knows host 1 by: 1 before Clusterio 2.1, random since.
+    const hostId=hostIdOf(before[0]);
+    controlOn(upCtl,"instance","create","kept");controlOn(upCtl,"instance","assign","kept",String(hostId));
+    const previousVersion=JSON.parse(docker("exec",upCtl,"cat","/clusterio/BUILD_INFO")).clusterioVersion;
+    report.clusterUpgradeFrom=previousVersion;
+    const [major,minor]=String(previousVersion).split(".").map(Number);
+    assert.ok(Number.isInteger(major) && Number.isInteger(minor),"previous controller's BUILD_INFO names no Clusterio version");
+    // Since Clusterio 2.1 the controller creates every host it issues a token for. Before,
+    // a host was registered only once it had connected.
+    const createsHosts=major>2 || (major===2 && minor>=1);
     for(const name of [upHost,upCtl]) {docker("stop","-t","60",name);remove(name);}
     create(upCtl,report.images.controller,upCtlArgs);docker("start",upCtl);await health(upCtl);
     // Host 1 connected under the previous version, so the controller knows it: token and id
-    // survive. Host 2 never connected, so its old token names a host that does not exist.
+    // survive. Host 2 never connected: a 2.1 controller created it anyway and its token
+    // survives too; a pre-2.1 token names a host that does not exist and is replaced.
     assert.equal(token(1,upCtl),before[0],"a host that had connected must keep its token");
-    assert.notEqual(token(2,upCtl),before[1],"a host that never connected must get a new token");
+    if(createsHosts) assert.equal(token(2,upCtl),before[1],"a host the previous controller created must keep its token");
+    else assert.notEqual(token(2,upCtl),before[1],"a host that never connected must get a new token");
     assert.equal(await accepted(token(2,upCtl),upCtl),true);
     create(upHost,report.images.host,upHostArgs);docker("start",upHost);await hostReady(upHost);
-    assert.equal(local(upHost,"host","config","show","host.id"),"1");
-    assert.deepEqual(hosts(upCtl).filter(entry=>entry.connected).map(entry=>entry.id),[1]);
-    assert.equal(JSON.parse(controlOn(upCtl,"instance","list","--output","json")).find(entry=>entry.name==="kept").assignedHost,1);
+    assert.equal(local(upHost,"host","config","show","host.id"),String(hostId));
+    assert.deepEqual(hosts(upCtl).filter(entry=>entry.connected).map(entry=>entry.id),[hostId]);
+    assert.equal(hosts(upCtl).length,2,"the upgrade must not register a host twice");
+    assert.equal(JSON.parse(controlOn(upCtl,"instance","list","--output","json")).find(entry=>entry.name==="kept").assignedHost,hostId);
     report.clusterUpgradeBoundary="Controller database, tokens and host configuration written by the previous images, then candidate startup; no instance was started";
   }); else if(options.case==="all" || options.case==="cluster-upgrade") {
     report.cases.push({name:"cluster-upgrade",status:"unverified",reason:"Needs --previous-host and --previous-controller"});

@@ -243,6 +243,13 @@ Instance options added in Clusterio 2.0.3 are seeded like any other field:
 | `factorio.lua_udp_port` | `null` (random each start) | Port on localhost inside the host container — no Compose port mapping is needed. Give each instance on a host a different port if you set it. |
 | `player_sync.sync_controller`, `sync_force`, `sync_appearance`, `sync_inventories`, `sync_logistics`, `sync_quick_bar`, `sync_settings`, `sync_recipe_notifications` | `true` | Choose which parts of a player Player Sync covers on this instance. |
 
+Added in Clusterio 2.1.2:
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `instance.restart_after_crash` | `false` | Start the instance again when it crashes after running for at least 10 minutes. |
+| `instance.crash_retry_attempts` | `3` | Restarts after a crash before giving up; `0` for no limit. Reset when the instance is started. |
+
 ### Skipped Fields
 
 The following fields are **automatically skipped** during seeding because they are runtime or environment-specific:

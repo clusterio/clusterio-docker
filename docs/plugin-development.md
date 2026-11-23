@@ -51,6 +51,14 @@ guide is for writing one.
      upstream's "Host manager" section).
    - A plugin can declare `requiredMods`; an instance whose mod pack lacks them refuses to
      start (the bundled `subspace_storage` requires the `subspace_storage` mod).
+6. **Clusterio 2.1.2 changes for plugins** (the 2.1.2 section of upstream's `CHANGELOG.md`):
+   - **Plugins load concurrently**, no longer one at a time in plugin list order. A plugin
+     that depends on another being loaded first must wait for it with `plugins.waitFor` from
+     its load context (`plugins.checkInstalled` and `plugins.checkEnabled` are there too).
+   - `lib.ZipArchive.zipfile` is private; read entries with `ZipArchive.openStream` /
+     `openRawStream`. `ModInfo.fromModFile` is `ModStore.readModInfo`.
+   - `@clusterio/lib` no longer brings in `@types/node`, `@types/yauzl` or `@types/yazl`. A
+     TypeScript plugin that relied on them lists them in its own `devDependencies`.
 
 ## The two rules that cost the most when unknown
 

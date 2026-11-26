@@ -39,6 +39,12 @@ start_log_streamer /clusterio/logs/cluster cluster
 source /scripts/install-plugins.sh
 install_external_plugins "$EXTERNAL_PLUGINS_DIR"
 
+# Plugins published on npm, named in CLUSTERIO_NPM_PLUGINS. Runs before the first Clusterio
+# command so the plugins' config fields exist; fatal if a named plugin cannot be installed.
+if [ -n "${CLUSTERIO_NPM_PLUGINS:-}" ]; then
+  gosu clusterio node /scripts/install-npm-plugins.cjs "$CLUSTERIO_NPM_PLUGINS"
+fi
+
 # Check if first run (no config file yet)
 FIRST_RUN=false
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -171,9 +177,17 @@ CONTROLLER_PID=$!
 # Forward signals to the controller process for graceful shutdown
 trap 'kill $CONTROLLER_PID; wait $CONTROLLER_PID; exit $?' SIGTERM SIGINT
 
-# Wait for controller to be ready
+# Wait for controller to be ready. A controller that stops first (a plugin that throws while
+# loading, a config it cannot read) will never answer: exit with its status, so the container
+# stops and a restart policy applies, instead of waiting here forever.
 echo "Waiting for controller to start..."
 until curl -sf http://localhost:${CONTROLLER_HTTP_PORT:-8080}/ > /dev/null 2>&1; do
+    if ! kill -0 "$CONTROLLER_PID" 2>/dev/null; then
+        status=0; wait "$CONTROLLER_PID" || status=$?
+        echo "ERROR: the controller stopped before it answered HTTP (exit status $status) — its output is above" >&2
+        [ "$status" -ne 0 ] || status=1
+        exit "$status"
+    fi
     sleep 2
 done
 echo "Controller is ready"

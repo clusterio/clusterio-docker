@@ -15,7 +15,7 @@ for(let i=0;i<flags.length;i++) {
     options[key.slice(2)]=flags[++i];
   } else throw Error("Unknown option "+key);
 }
-const cases=["lifecycle","shutdown","stale-lock","rotation","overrides","saved-identity","hook-identity","zero-id","host-wipe","scale-out","controller-wipe","failures","upgrade","cluster-upgrade"];
+const cases=["lifecycle","shutdown","stale-lock","rotation","overrides","saved-identity","hook-identity","zero-id","host-wipe","scale-out","controller-wipe","failures","npm-plugins","upgrade","cluster-upgrade"];
 assert.ok(options.case==="all" || cases.includes(options.case), "Unknown acceptance case");
 const expected=options.plugins==="none"?[]:options.plugins.split(",").sort();
 const run="cd-smoke-"+randomUUID().slice(0,12), label="clusterio-docker.smoke";
@@ -331,6 +331,46 @@ try {
     docker("cp",bad,name+":/etc/clusterio/pre-start.d/10-fail.sh");docker("start",name);
     await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited","failing hook");
     assert.equal(JSON.parse(docker("inspect",name))[0].State.ExitCode,17);
+    // A controller that stops before it answers HTTP takes its container with it. The hook
+    // leaves it a config it cannot read; a plugin that throws while loading ends the same way.
+    const dead=run+"-dead-controller", corrupt=join(directory,"corrupt.sh");
+    create(dead,report.images.controller,["-e","INIT_CLUSTERIO_ADMIN=smoke"]);
+    writeFileSync(corrupt,'printf "{" > "$CLUSTERIO_CONFIG_PATH"\n');
+    docker("cp",corrupt,dead+":/etc/clusterio/pre-start.d/10-corrupt.sh");docker("start",dead);
+    await until(()=>JSON.parse(docker("inspect",dead))[0].State.Status==="exited","controller that cannot start");
+    assert.notEqual(JSON.parse(docker("inspect",dead))[0].State.ExitCode,0);
+    assert.match(logsOf(dead),/ERROR: the controller stopped before it answered HTTP/);
+    remove(dead);
+  });
+  // CLUSTERIO_NPM_PLUGINS, against the real registry. Release images only: a custom build refuses it.
+  if(report.hostBuildInfo.clusterioTarget==="release") await scenario("npm-plugins",async()=>{
+    // Small, and none of its dependencies is a plugin, so nothing it pulls in is read by the peer-range check.
+    const spec="timeshade@0.1.1";
+    await restartHost({CLUSTERIO_NPM_PLUGINS:spec});
+    assert.ok(logsOf(host).includes("Installed "+spec));
+    assert.match(local(host,"host","plugin","list"),/ - timeshade$/m);
+    // Installed and listed does not mean it loads: @hornwitser/server_select@2.0.1 is both, and its
+    // entrypoints do not resolve on Clusterio 2.x. Import the one this host's instances load, by
+    // path, as Clusterio's plugin loader does.
+    docker("exec","--user","clusterio","-w","/clusterio",host,"node","--input-type=module","-e",
+      'const {plugin}=await import("timeshade");await import("/clusterio/node_modules/timeshade/"+plugin.instanceEntrypoint)');
+    // Installing a plugin leaves every core package where the image put it.
+    const core=docker("exec",host,"sh","-c","cat /clusterio/node_modules/@clusterio/*/package.json | grep '\"version\"' | sort -u");
+    assert.equal(core,'"version": "'+report.hostBuildInfo.clusterioVersion+'",');
+    // A restart reuses the install; only a recreated container goes back to the registry.
+    docker("restart","-t","60",host);await hostReady(host);
+    assert.ok(logsOf(host).includes("npm plugins already installed: "+spec));
+    for(const [value,message] of [["../plugin","Invalid plugin"],["@clusterio/plugin-global_chat","belongs to the image"],
+      ["@hornwitser/discord_bridge@0.2.5","is not a Clusterio 2.x plugin"]]) {
+      const name=run+"-bad-plugin";
+      create(name,report.images.host,["-e","CLUSTERIO_NPM_PLUGINS="+value,"-e","HOST_NAME=clusterio-host-1"]);docker("start",name);
+      await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited","refused plugin "+value);
+      assert.equal(JSON.parse(docker("inspect",name))[0].State.ExitCode,1);
+      assert.ok(logsOf(name).includes("ERROR: CLUSTERIO_NPM_PLUGINS: ") && logsOf(name).includes(message),value);
+      assert.ok(!logsOf(name).includes("Waiting for"),"the host went on after a refused plugin");
+      remove(name);
+    }
+    await restartHost();
   });
   if(options["previous-host"]) await scenario("upgrade",async()=>{
     remove(host);

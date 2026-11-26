@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const {packages, mismatches, all} = require("../scripts/install-release.cjs");
+const {packages, overrides, mismatches, all} = require("../scripts/install-release.cjs");
 test("default selection preserves all six bundled plugins", () => {
   assert.equal(packages("host", "2.0.1").length, 9);
   for (const name of all) assert.ok(packages("controller", "2.0.1").includes("@clusterio/plugin-" + name + "@2.0.1"));
@@ -15,6 +15,14 @@ test("minimal and subset use pinned native packages", () => {
 test("lib is pinned for every role and selection", () => {
   for (const role of ["host", "controller"]) for (const selection of ["all", "none", "player_sync"])
     assert.ok(packages(role, "2.0.3", selection).includes("@clusterio/lib@2.0.3"));
+});
+test("overrides hold every @clusterio package at the version, installed in this image or not", () => {
+  const held = overrides("2.1.2");
+  for (const name of ["controller", "ctl", "host", "lib", "web_ui", ...all.map(n => "plugin-" + n)])
+    assert.equal(held["@clusterio/" + name], "2.1.2");
+  assert.equal(Object.keys(held).length, 11);
+  // npm rejects an override that differs from a direct dependency's spec: both must be the bare version.
+  for (const spec of packages("controller", "2.1.2")) assert.equal(held[spec.slice(0, spec.lastIndexOf("@"))], "2.1.2");
 });
 test("invalid selections and roles fail before npm runs", () => {
   for (const selection of ["", "all,none", "global_chat,global_chat", "../x", "--ignore-scripts"])

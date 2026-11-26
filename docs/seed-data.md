@@ -92,7 +92,7 @@ Place JSON files in `seed-data/controller/database/` to pre-populate the databas
 
 ## Mod Seeding
 
-Place Factorio mod `.zip` files in `seed-data/mods/` to upload them to the controller on first run.
+Place Factorio mod `.zip` files in `seed-data/mods/` to upload them to the controller when it starts.
 
 ```
 seed-data/
@@ -103,7 +103,7 @@ seed-data/
 
 **How it works:**
 
-1. On every startup, all `.zip` files in `seed-data/mods/` are uploaded to the **controller** via the API (already-uploaded mods are skipped)
+1. On every startup, all `.zip` files in `seed-data/mods/` are uploaded to the **controller** via the API (an upload that fails, for example of a mod the controller already has, is logged as a WARNING and seeding continues)
 2. Uploaded mods are automatically **added to the default mod pack** (`DEFAULT_MOD_PACK` env var, e.g., "Space Age 2.1"). The `--add-mods` command is idempotent — already-added mods are unchanged
 3. **Hosts** pre-cache mods locally from the same seed-data mount on every startup — no network download needed
 4. **Instances** automatically get symlinks to the host's cached mods when they start
@@ -116,10 +116,10 @@ You can also manage mod packs manually via the Web UI or CLI:
 
 ```bash
 # Create a mod pack
-docker exec clusterio-controller npx clusterioctl mod-pack create "My Pack" 2.1 --mods my-mod:1.0.0
+docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json mod-pack create "My Pack" 2.1 --mods my-mod:1.0.0
 
 # List uploaded mods
-docker exec clusterio-controller npx clusterioctl mod list
+docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json mod list
 ```
 
 ## Instance Seeding (Hosts)
@@ -222,7 +222,7 @@ docker exec clusterio-host-1 cat /clusterio/data/instances/MyInstance/instance.j
 ```
 
 > **`subspace_storage`**: an instance that loads this plugin refuses to start unless its mod
-> pack contains the `subspace_storage` mod (>= `1.99.0`). Either set
+> pack contains the `subspace_storage` mod. Either set
 > `"subspace_storage.load_plugin": false` as above, or add `subspace_storage` and its
 > dependency `clusterio_lib` to the mod pack. `instance.json` applies only to instances
 > seeding creates; for an instance that already exists run
@@ -230,25 +230,21 @@ docker exec clusterio-host-1 cat /clusterio/data/instances/MyInstance/instance.j
 
 > **`auto_pause` foot-gun**: a headless server with `auto_pause: true` (Factorio's default)
 > **pauses at 0 connected players** — which silently freezes every `on_tick`-driven plugin
-> pipeline while RCON keeps answering, so everything *looks* alive. Both known production
-> consumers of these images independently discovered this and bake `auto_pause: false` into
-> their seeds. If any plugin does asynchronous on-tick work, set it `false` explicitly (the
+> pipeline while RCON keeps answering, so everything *looks* alive. If any plugin does asynchronous on-tick work, set it `false` explicitly (the
 > seeder logs an INFO when an instance is created without it).
 
-Instance options added in Clusterio 2.0.3 are seeded like any other field:
+Every other field of Clusterio's instance configuration is seeded the same way. Their
+defaults are Clusterio's;
+`docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json instance config list <instance>`
+shows the values in effect. For example:
 
-| Field | Default | Notes |
-|-------|---------|-------|
-| `factorio.enable_lua_udp` | `false` | UDP messaging between the host and the Factorio server. Required by plugins that declare the `LuaUdp` feature. Needs Factorio ≥ 2.1.10. |
-| `factorio.lua_udp_port` | `null` (random each start) | Port on localhost inside the host container — no Compose port mapping is needed. Give each instance on a host a different port if you set it. |
-| `player_sync.sync_controller`, `sync_force`, `sync_appearance`, `sync_inventories`, `sync_logistics`, `sync_quick_bar`, `sync_settings`, `sync_recipe_notifications` | `true` | Choose which parts of a player Player Sync covers on this instance. |
-
-Added in Clusterio 2.1.2:
-
-| Field | Default | Notes |
-|-------|---------|-------|
-| `instance.restart_after_crash` | `false` | Start the instance again when it crashes after running for at least 10 minutes. |
-| `instance.crash_retry_attempts` | `3` | Restarts after a crash before giving up; `0` for no limit. Reset when the instance is started. |
+| Field | Notes |
+|-------|-------|
+| `factorio.enable_lua_udp` | UDP messaging between the host and the Factorio server. Required by plugins that declare the `LuaUdp` feature. |
+| `factorio.lua_udp_port` | Port on localhost inside the host container — no Compose port mapping is needed. Give each instance on a host a different port if you set it. |
+| `player_sync.sync_controller`, `sync_force`, `sync_appearance`, `sync_inventories`, `sync_logistics`, `sync_quick_bar`, `sync_settings`, `sync_recipe_notifications` | Choose which parts of a player Player Sync covers on this instance. |
+| `instance.restart_after_crash` | Start the instance again when it crashes. |
+| `instance.crash_retry_attempts` | Restarts after a crash before giving up; `0` for no limit. |
 
 ### Skipped Fields
 

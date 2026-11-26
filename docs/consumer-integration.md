@@ -9,7 +9,7 @@ How to use clusterio-docker images in a downstream project.
 | `latest` / `main` | npm registry (`@clusterio/*`), pinned to **`2.1.2`** — **moves** as the docker layer rebuilds | Stable, published Clusterio (newest) |
 | `2.1.2` | Same as `latest` — the bundled Clusterio version; **moves** on rebuild | Track a Clusterio version |
 | `2.1.2.rN` | An **immutable** revision pin (cut from a git tag); `.rN` bumps for docker-layer fixes on the same Clusterio version | **Production — pin this** |
-| `<branch>` | Built from fork branch `solarcloud7/clusterio:<branch>` on a **non-main branch push** (falls back to the fork's default branch, `master`). PRs into `main`, `main`, and tags build the `release` target. | Dormant `custom`/fork path (a `factorio-*` line when npm lags a new Factorio version) |
+| `<branch>` | Built from fork branch `solarcloud7/clusterio:<branch>` on a **non-main branch push** (falls back to the fork's default branch, `master`). PRs into `main`, `main`, and tags build the `release` target. | `custom`/fork builds (a `factorio-*` line for a Factorio version the npm release does not support) |
 
 ```yaml
 # Example: pull the stable images
@@ -24,29 +24,18 @@ image: ghcr.io/clusterio/clusterio-docker-host:latest
 > uses `:latest` for zero-config first runs; override `CLUSTERIO_IMAGE_TAG=<version>.rN` in
 > `.env` for anything you depend on.
 
-> **Moved to the clusterio organisation (2026-11-06):** images publish as
-> `ghcr.io/clusterio/clusterio-docker-{controller,host}`. The old
-> `ghcr.io/solarcloud7/clusterio-docker-*` images stay pullable, but nothing new is published
-> there; `2.0.3.r1` is their last pin. Switch the image name when you move to `:2.0.3.r2` or later.
+> **Pins under `ghcr.io/solarcloud7/`:** images publish as
+> `ghcr.io/clusterio/clusterio-docker-{controller,host}`. Nothing is published to
+> `ghcr.io/solarcloud7/clusterio-docker-*`; `2.0.3.r1` is the last pin there. Switch the image
+> name when you move to `:2.0.3.r2` or later.
 
-> **Migrating off old `:1` / `:1.x` / `:1.x.y` tags:** the independent repo-SemVer tag axis
-> is **retired** — those tags are frozen at their last build and receive **no** further
-> updates. Re-pin to `:<version>.rN` (e.g. `:2.1.2.r1`).
+> **Migrating off `:1` / `:1.x` / `:1.x.y` tags:** those tags receive **no** updates.
+> Re-pin to `:<version>.rN` (e.g. `:2.1.2.r1`).
 
-> **Migrating off `:2.0.0-alpha.27-r1` .. `-r4` (hyphen scheme):** these four were published
-> before a SemVer-precedence bug in the separator was caught (a hyphen makes `27-r1` sort as
-> *newer* than `alpha.28` under SemVer-aware tooling). They're frozen, not deleted — re-pin to
-> `:2.0.0-alpha.27.r5` (dot) or later; no further `-rN` (hyphen) tags will be cut.
+> **Migrating off `:2.0.0-alpha.27-r1` .. `-r4` (hyphen scheme):** these tags receive no
+> updates, and no `-rN` (hyphen) tags are cut. Re-pin to a `.rN` (dot) tag.
 
 > **Note:** Image names include `-docker-` (derived from the repo name `clusterio-docker`).
-
-> **Export-data:** The extended per-category export spritesheets (recipes, signals,
-> technologies, planets, qualities, entities, static UI icons) are now **mainlined** in
-> Clusterio (alpha.23 [#838](https://github.com/clusterio/clusterio/pull/838)), so the
-> stable `latest` images already produce them — the old `ExtendedExportData` fork branch
-> is superseded. Note the web-UI consumption API changed in alpha.24
-> ([#875](https://github.com/clusterio/clusterio/pull/875): `useExportPrototypeMetadata`,
-> `FactorioIcon`); downstream UI code that read the old hooks must migrate.
 
 ## Compose Setup
 
@@ -146,23 +135,18 @@ its `plugin` export is detectable from the source (`module.exports = { plugin }`
 upstream's [migration guide](https://github.com/clusterio/clusterio/blob/v2.0.1/docs/devs/plugin-migration-to-2.0.md).
 
 Clusterio 2.1 adds: web modules built with Vite (`clusterioPlugin` from
-`@clusterio/web_ui/vite.mjs`; a webpack-built web module is rejected with "Incompatible
-dist/web/manifest.json, the plugin must be rebuilt with Vite", while its controller, host and
+`@clusterio/web_ui/vite.mjs`; a webpack-built web module is rejected, while its controller, host and
 instance code still load), HTTP-style request error classes in place of `RequestError`,
 `lib.atomicOverwriteFile` in place of `lib.safeOutputFile`, host token APIs under
 `controller.hosts.*`, and the hosts datastore under `controller.hosts.records` (`set`,
 `delete`, `size`, the `update` event). See upstream `docs/devs/plugin-migration-to-2.1.md`.
 Mount plugins with a web module prebuilt: the release images do not contain `vite`.
 
-### Singleton Fix (Custom Builds)
+### Singleton Fix
 
-When using `CLUSTERIO_TARGET=custom` (monorepo layout), `npm install` for external plugins can install `@clusterio/lib` and `@clusterio/web_ui` locally into the plugin's `node_modules/`. This creates duplicate singletons — the plugin registers permissions/events in its copy while the controller reads from the monorepo copy, causing fatal crashes like:
+`npm install` for an external plugin can install `@clusterio/lib` and `@clusterio/web_ui` locally into the plugin's `node_modules/`. This creates duplicate singletons — the plugin registers permissions/events in its copy while the controller reads from the image's copy, and reports them as missing.
 
-```
-Error: permission surface_export.ui.view does not exist
-```
-
-**The latest images fix this automatically** — `install-plugins.sh` removes `node_modules/@clusterio` after install, forcing Node.js to resolve upward to the shared monorepo copies.
+`install-plugins.sh` removes `node_modules/@clusterio` after install, forcing Node.js to resolve upward to the image's copies.
 
 That legacy directory-mount cleanup does not prove version compatibility. For packaged derived images, use compatible peer dependencies and the offline verification below; it detects duplicate resolution without deleting packages.
 
@@ -196,18 +180,18 @@ seed-data/
 | Host hostnames must follow `clusterio-host-N` | The token file is named after the host (`clusterio-host-N.token`), and the controller issues files for N in 1..`HOST_COUNT` only |
 | Host ids are not N | The controller assigns them (at random on new clusters; hosts upgraded from 2.0.3 keep theirs) and the host takes its id from its token. Host names are not unique in Clusterio 2.1: address hosts by id in scripts, by name only when one host has it |
 | External plugins mount must be **read-write** | `npm install` runs inside each plugin directory |
-| `factorio-client` volume should be `external: true` | Preserves ~450 MB download across `docker compose down -v` |
+| `factorio-client` volume should be `external: true` | Preserves the downloaded game client across `docker compose down -v` |
 | Game port ranges auto-derive from the name's number | `clusterio-host-N` → ports `34000 + N × 100` to `+99` (N=1 → `34100-34199`, N=10 → `35000-35099`; `34N00-34N99` below is shorthand for this). Fresh hosts only; a saved range is kept |
 | Every container that mounts `shared-tokens` can read `config-control.json` | It is the cluster-admin credential for `INIT_CLUSTERIO_ADMIN`, and the volume also holds every host's token. Host containers are inside the controller's trust domain. A remote host authenticates with `CLUSTERIO_HOST_TOKEN` and never mounts the volume |
 | Host token files are checked on every controller start | `config-control.json` is written on the first run only. Each host token file is kept while the controller accepts it; a missing or rejected one is re-issued through the host pairing endpoint unless a host of that name is still registered. A token cannot be rotated in place: `clusterioctl host revoke` deletes the host and unassigns its instances, the next start issues a new token under a new id, and the instances must be assigned again. `CLUSTERIO_HOST_TOKEN` takes precedence over the file |
 | Raising `HOST_COUNT` needs a recreated controller | `docker compose up -d` re-reads the environment; `docker compose restart` does not |
-| Hosts created in the last 60 s die with a killed controller | The controller saves its database every 60 s and on a graceful stop. Killed within 60 s of creating hosts (first start, or after raising `HOST_COUNT`), it loses them and anything else done in that window (instances, assignments); on the next start it issues new tokens under new ids and the hosts follow |
+| Hosts created since the last save die with a killed controller | The controller saves its database at an interval (`controller.autosave_interval`) and on a graceful stop. Killed before the first save after creating hosts (first start, or after raising `HOST_COUNT`), it loses them and anything else done since the last save (instances, assignments); on the next start it issues new tokens under new ids and the hosts follow |
 | The controller recognises a host by its token file, then by name | Only a host without a usable token file is matched by the name `clusterio-host-N`. A host whose `host.name` was changed and whose token file is lost is not recognised: the controller issues a token for a new host of that name, and the old host's instances stay assigned to the old id |
 | A wiped host data volume keeps identity, not data | The host gets its id back from the token file and its instances stay assigned, but their saves and files lived on that volume and are gone |
 
 ## Selecting bundled plugins in release builds
 
-Both Dockerfiles accept `CLUSTERIO_PLUGINS`: `all` (the unchanged default), `none`,
+Both Dockerfiles accept `CLUSTERIO_PLUGINS`: `all` (the default), `none`,
 or a comma-separated selection of `global_chat,player_sync,player_auth,research_sync,statistics_exporter,subspace_storage`
 (`inventory_sync`, the pre-2.0 name of `player_sync`, is rejected with a hint).
 
@@ -218,7 +202,7 @@ docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t my-host .
 
 The development Compose overlay forwards the same variable. This applies only to
 `CLUSTERIO_TARGET=release`; custom builds use their source tree's plugins. It is a
-build input, not a runtime environment switch. Published defaults remain unchanged.
+build input, not a runtime environment switch. The published images are built with `all`.
 
 Clusterio discovers installed plugin packages automatically. A smaller plugin-list
 does not disable installed bundled plugins. Plugins from npm go in `CLUSTERIO_NPM_PLUGINS`
@@ -310,7 +294,7 @@ locked while it runs; some local-only fields require a pre-start hook instead.
 
 ## Persistent state and migration
 
-The base Compose file now mounts controller `/clusterio/data`, `/clusterio/mods`,
+The base Compose file mounts controller `/clusterio/data`, `/clusterio/mods`,
 `/clusterio/static`, `/clusterio/tokens` and `/clusterio/logs`, plus each host's
 data and logs. Host mods are a downloadable cache. Preserve the Factorio installation
 volume to avoid downloading it again. Include configured plugin storage in backups.
@@ -327,7 +311,7 @@ the old container directories; a container's writable layer is not persistent st
 4. Verify the copy before recreating containers with the new Compose file. Check mods,
    served assets and logs after startup; retain backups until acceptance is complete.
 
-The PR does not perform this migration on a running installation.
+Nothing in the images or the Compose file performs this migration.
 
 ## Upgrading from 2.1.1
 
@@ -335,9 +319,9 @@ Images from `2.1.2` (first pin `2.1.2.r1`) bundle Clusterio 2.1.2. Change the ta
 controller and every host and recreate the containers (`docker compose up -d`); there is no
 migration step. Details in `CHANGELOG.md` (the Clusterio `2.1.2` entry). Check three things:
 
-- **Slow links.** The controller closes an upload or download that moves less than about
-  1.8 MiB in a minute (about 30 KiB/s); on 2.1.1 the limit was 30 KiB in 30 seconds. The
-  setting is `controller.transfer_min_speed` (KiB/s, default `64`, `0` for no limit) and
+- **Slow links.** The controller closes an upload or download slower than
+  `controller.transfer_min_speed` (KiB/s; `0` for no limit), and the default is stricter than
+  the limit 2.1.1 applied. The setting
   replaces `controller.transfer_min_progress`. A saved value is converted on load; a script
   or hook that still sets the old key changes nothing and gets no failing exit code.
 - **External plugins.** Plugins load concurrently, so one that relied on plugin list order
@@ -355,12 +339,12 @@ Images from `2.1.1` (first pin `2.1.1.r1`) bundle Clusterio 2.1. Details in `CHA
 run on the controller's machine. Steps, in order:
 
 1. **Decide log retention before the first start on 2.1.1.** Clusterio 2.1 deletes log files
-   older than 30 days at start and hourly, starting with the first start after the upgrade.
+   older than its retention setting (30 days unless set), starting with the first start after the upgrade.
    To keep them, set `CLUSTERIO_LOG_RETENTION_DAYS=0` (or another number of days) on the
    controller and on every host. The entrypoints write it before the server starts.
 2. **On 2.0.3, before upgrading: deal with every instance that loads `subspace_storage`.**
    On 2.1.1 such an instance refuses to start when its mod pack lacks the `subspace_storage`
-   mod (>= `1.99.0`). The 2.1.1 controller's automatic download of required mods does not
+   mod. The 2.1.1 controller's automatic download of required mods does not
    exist yet on 2.0.3, so do one of these first:
    - stop the plugin loading on each affected instance:
      `ctl instance config set <instance> subspace_storage.load_plugin false`. After the
@@ -386,7 +370,7 @@ run on the controller's machine. Steps, in order:
    removed.
 5. **Upgrade the controller and every host together**: pin both images to `:2.1.2.r1`, then
    recreate the cluster (`docker compose up -d`). Let the controller stop gracefully (it saves
-   its database on a graceful stop and every 60 s).
+   its database on a graceful stop).
 6. **Check the result.** `ctl host list` shows every host connected. Hosts that had
    connected under 2.0.3 keep their id, token and assigned instances. A host whose token file
    existed but that never connected gets a new token and id on the controller's first start.
@@ -409,9 +393,8 @@ What breaks:
   page is removed.
 - **`CLUSTERIO_HOST_TOKEN` decides `host.id`**, and a token the controller rejects stops the
   host at once.
-- **`clusterioctl` prints results on stdout**, commands without a result print
-  `Command ran successfully`, and `instance list` has three new trailing columns
-  (`isTemplate`, `templateId`, `modPackId`).
+- **`clusterioctl` prints results on stdout**, commands without a result print a
+  confirmation line, and `instance list` has more columns. Parse `--output json`, not tables.
 - **A headless export exports no icons** instead of blank ones; the host log says so.
 - **Custom builds need Clusterio source at `2.1.1` or newer.**
 

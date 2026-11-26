@@ -13,11 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 **Note**: GHCR image names include `-docker-` because the CI derives them from the repository name (`clusterio-docker`).
 
-**Clusterio version**: `release` builds are pinned to **`2.1.2`** via the `CLUSTERIO_VERSION` build arg (see Build Arguments). Bump that one value to upgrade. `custom`/`factorio-*` branch builds compile from the bundled `clusterio/` source instead.
+**Clusterio version**: `release` builds are pinned to **`2.1.2`** via the `CLUSTERIO_VERSION` build arg (see Build Arguments). Bump it in both Dockerfiles to upgrade (see Release Process). `custom`/`factorio-*` branch builds compile from the bundled `clusterio/` source instead.
 
-**Clusterio 2.0 / 2.1 (stable)**: the images track the stable line — `2.0.1` was the first stable release, `2.1.2` is the current pin (ES modules, Node 22.18+ or 24.2+; the images run Node 24). Upstream 2.0 breaking changes the images absorb: `inventory_sync` → `player_sync`, ctl config keys `control.*` → `ctl.*`, explicit `config create`, a token-gated `/metrics`, and plugin entrypoints with `.js` extensions — see Pitfalls #12–#14 and `CHANGELOG.md` (2026-10-14). Clusterio 2.1 changes: hosts are created by the controller, which assigns their ids, and host tokens come from the host pairing endpoint (the controller entrypoint issues them, see Host Token Issue and Check); `subspace_storage` requires its mod in the mod pack; logs older than 30 days are deleted; `clusterioctl --output json`; plugin web modules are built with Vite — see Pitfalls #15–#18 and the Clusterio `2.1.1` entry in `CHANGELOG.md`. Clusterio 2.1.2 needed no change to the entrypoints: `controller.transfer_min_progress` became `controller.transfer_min_speed` (64 KiB/s by default, an existing value is converted on load), plugins load concurrently, and the log file transport is built in (same file names) — see the Clusterio `2.1.2` entry in `CHANGELOG.md`.
+**Clusterio 2.x behaviour the entrypoints depend on** (the images run Node 24): plugins are ES modules with `.js` entrypoint names, ctl config keys are `ctl.*`, config files are created with an explicit `config create`, and `/metrics` needs a token — see Pitfalls #12–#14. Hosts are created by the controller, which assigns their ids, and host tokens come from the host pairing endpoint (the controller entrypoint issues them, see Host Token Issue and Check); `subspace_storage` requires its mod in the mod pack; log files older than the retention setting are deleted; `clusterioctl` has `--output json`; plugin web modules are built with Vite — see Pitfalls #15–#18. What changed with each Clusterio version is recorded in `CHANGELOG.md`.
 
-**Factorio 2.1 support**: npm Clusterio has run Factorio **2.1.x** natively since **`2.0.0-alpha.27`** — it carries `ApiVersions` `2.1`, the `clusterio_lib` `factorio_version: "2.1"` variant, the `Base Game/Space Age 2.1` default packs, and the `recycler` builtin. So the **default `release` target runs 2.1**; the `custom`/fork build is no longer required for it. (Historically it was: alpha.26 rejected 2.1-format mod `info.json` and lacked `recycler`, so 2.1 lived only in the `factorio-2.1.8` fork branch until alpha.27 upstreamed the fix.) The `custom` machinery is retained for the next Factorio line that npm may lag — see Branch model in README.md.
+**Factorio version**: the default `release` target runs Factorio **2.1.x** (`DEFAULT_FACTORIO_VERSION` defaults to `2.1`; the default mod packs are `Base Game 2.1` and `Space Age 2.1`, the latter with the `recycler` builtin enabled). The `custom` target builds Clusterio from source instead of npm, for a Factorio line the npm release does not support — see Branch model in README.md.
 
 ## Repository Structure
 
@@ -26,7 +26,8 @@ clusterio-docker/
 ├── .env.example                   # Environment template (all settings in one file)
 ├── Dockerfile.controller          # Controller image (Node.js + Clusterio controller/ctl + plugins)
 ├── Dockerfile.host                # Host image (Node.js + Clusterio host/ctl + Factorio headless + plugins)
-├── docker-compose.yml             # Default 2-host cluster for local development/testing
+├── docker-compose.yml             # Default 2-host cluster; pulls the published images
+├── docker-compose.dev.yml         # Overlay that adds build contexts (source builds)
 ├── scripts/
 │   ├── controller-entrypoint.sh   # Controller startup: first-run detection, bootstrap, host tokens, seeding
 │   ├── host-entrypoint.sh         # Host startup: token loading, config, token check
@@ -43,20 +44,32 @@ clusterio-docker/
 │   ├── configure-host.cjs         # Host config reconciliation through the native CLI
 │   ├── verify-cli.cjs             # Offline native CLI + plugin-resolution check (consumer verification)
 │   ├── run-pre-start.sh           # Runs /etc/clusterio/pre-start.d hooks as clusterio
-│   └── prometheus.yml             # Optional Prometheus scrape config (token-gated /metrics)
+│   ├── prometheus.yml             # Optional Prometheus scrape config (token-gated /metrics)
+│   ├── regenerate-export-data.sh  # Controller: re-runs export-data for an instance; refuses headless hosts
+│   ├── stream-logs.sh             # Sourced by both entrypoints: mirrors on-disk logs to stdout ([cluster-log])
+│   ├── ctl-config.cjs             # config-control.json: control.* → ctl.* migration; host-reachable copy for the boot-race guard
+│   ├── check-plugin-resolution.cjs  # Used by verify-cli.cjs: shared @clusterio dependency resolution
+│   └── patches/disable-immutable-cache.js  # Controller: /static revalidation patch (CONTROLLER_STATIC_CACHE_MODE)
 ├── seed-data/                     # Example seed data (used by CI tests)
 │   ├── controller/database/       # users.json, roles.json
 │   ├── hosts/                     # Instance folders per host
 │   ├── mods/                      # Factorio mod .zip files
 │   └── external_plugins/          # External Clusterio plugins
 ├── tools/
-│   ├── deploy-cluster.ps1         # Hot-deploy source to running containers (~6s)
+│   ├── build-custom-context.py    # Builds custom-target images from an existing Clusterio checkout
+│   ├── deploy-cluster.ps1         # Hot-deploy compiled Clusterio source to running containers
 │   └── get-admin-token.ps1        # Retrieve admin token from running controller
+├── tests/                         # Unit tests and the container acceptance runner (tests/README.md)
 ├── docs/
+│   ├── asset-export.md            # Game client and export-data
+│   ├── clusterio-engineering-notes.md  # Upstream behaviours the images work around
 │   ├── consumer-integration.md    # Downstream consumer integration guide
-│   └── seed-data.md               # Comprehensive seed data documentation
+│   ├── multi-cluster.md           # Several clusters on one Docker host
+│   ├── plugin-development.md      # Developing a plugin against the images
+│   └── seed-data.md               # Seed data documentation
 └── .github/workflows/
-    └── docker-build.yml           # CI: build, push to GHCR, integration tests
+    ├── docker-build.yml           # CI: gates, tests, build, push to GHCR, GitHub Release
+    └── cache-cleanup.yml          # Deletes a closed PR's build caches
 ```
 
 ## Architecture
@@ -162,7 +175,7 @@ clusterio-docker/
 | Host configuration | ✅ | Saved name + id from the token in use + explicit overrides + native batch readback |
 
 ### Host Token Issue and Check
-Clusterio 2.1 signs a host token only for a host the controller has created, and the controller picks the host's id. On every start, after the controller answers HTTP, `provision-hosts.cjs` keeps each `clusterio-host-N.token` (N in 1..`HOST_COUNT`) the controller still accepts and creates the missing ones through `POST /api/host-pairing` with the admin token. It never pairs a name that is already registered (host names are not unique in Clusterio 2.1, so a second pairing would add a second host beside the first); it logs a warning with the recovery: `clusterioctl host revoke clusterio-host-N` (unassigns its instances), restart the controller, and once the host has reconnected under its new id, assign its instances again (Pitfall #18). A host it created but could not write a token file for is revoked again, so the name is not blocked. The controller recognises a host by its token file first and only then by the name `clusterio-host-N`: a host whose `host.name` was changed and whose token file is lost is not recognised, so the controller issues a token for a new host of that name and the old host's instances stay assigned to the old id. The controller saves its database every 60 s and on a graceful stop; killed within 60 s of creating hosts, it loses them (and anything else done in that window), issues new tokens under new ids on the next start, and the hosts follow.
+Clusterio 2.1 signs a host token only for a host the controller has created, and the controller picks the host's id. On every start, after the controller answers HTTP, `provision-hosts.cjs` keeps each `clusterio-host-N.token` (N in 1..`HOST_COUNT`) the controller still accepts and creates the missing ones through `POST /api/host-pairing` with the admin token. It never pairs a name that is already registered (host names are not unique in Clusterio 2.1, so a second pairing would add a second host beside the first); it logs a warning with the recovery: `clusterioctl host revoke clusterio-host-N` (unassigns its instances), restart the controller, and once the host has reconnected under its new id, assign its instances again (Pitfall #18). A host it created but could not write a token file for is revoked again, so the name is not blocked. The controller recognises a host by its token file first and only then by the name `clusterio-host-N`: a host whose `host.name` was changed and whose token file is lost is not recognised, so the controller issues a token for a new host of that name and the old host's instances stay assigned to the old id. The controller saves its database at an interval (`controller.autosave_interval`) and on a graceful stop; killed before the first save after creating hosts, it loses them (and anything else done since the last save), issues new tokens under new ids on the next start, and the hosts follow.
 
 The host sets `host.id` from its effective token on every boot and asks `GET /api/host-pairing/check` before starting, because a 2.1 host started with a rejected token does not exit: it opens a join request and waits for approval without rereading its token file. Results:
 - Wiped controller volume: every token is re-issued under new ids; hosts see their token rejected, wait for the new file and reconfigure.
@@ -209,7 +222,7 @@ Explicit CLUSTERIO_HOST_TOKEN takes precedence over the mounted token and decide
 | `FACTORIO_CLIENT_TAG` | No | `stable` | Factorio client version tag for runtime download |
 | `SKIP_CLIENT` | No | `false` | Set to `true` to force headless even when game client is available |
 
-### Build Arguments (set per-service in `docker-compose.yml`, NOT in `.env`)
+### Build Arguments (set in `docker-compose.dev.yml` or with `--build-arg`)
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `CLUSTERIO_TARGET` | `release` | Build target: `release` (npm registry) or `custom` (local source in `clusterio/`) |
@@ -226,7 +239,7 @@ Explicit CLUSTERIO_HOST_TOKEN takes precedence over the mounted token and decide
 | `FACTORIO_CLIENT_SHA256` | — | SHA256 checksum for game client archive (skips verification if empty) |
 | `CURL_RETRIES` | `8` | Number of curl retry attempts for Factorio downloads |
 
-Build args are set directly in the `build.args` section of each host service in `docker-compose.yml`. This keeps per-host build configuration (e.g., host-1 with game client, host-2 headless-only) separate and avoids polluting `.env` with build-time-only settings.
+The base `docker-compose.yml` has no `build:` section. The `docker-compose.dev.yml` overlay sets build args per service under `build.args`: `CLUSTERIO_TARGET` and `CLUSTERIO_PLUGINS` are interpolated from `.env`, and the per-host client args (e.g. host-1 with game client, host-2 headless-only) are edited in the overlay.
 
 ### Custom Clusterio Build (Fork)
 To use a Clusterio fork instead of the npm-published packages:
@@ -271,7 +284,7 @@ docker compose up -d
 
 ### Building Locally
 ```bash
-docker compose build                                    # Both images
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build   # Both images (the base file alone has no build configuration)
 docker build -f Dockerfile.controller -t clusterio-controller .  # Controller only
 docker build -f Dockerfile.host -t clusterio-host .              # Host only
 ```
@@ -302,21 +315,21 @@ docker logs clusterio-controller | grep seed  # Check seeding status
 ```
 
 ### Hot Deploy (Custom Fork)
-When using `CLUSTERIO_TARGET: custom` with a local fork, use the hot-deploy script to push code changes to running containers without rebuilding images (~6s per container):
+When using `CLUSTERIO_TARGET: custom` with a local fork, use the hot-deploy script to push code changes to running containers without rebuilding images:
 ```powershell
 ./tools/deploy-cluster.ps1                         # Build + deploy to all containers
 ./tools/deploy-cluster.ps1 -Target controller      # Deploy to controller only
 ./tools/deploy-cluster.ps1 -NoBuild                # Deploy previously compiled artifacts
 ./tools/deploy-cluster.ps1 -NoBuild -NoRestart     # Deploy without restarting
 ```
-The script compiles TypeScript locally via `pnpm install`, then copies `dist/` directories into containers via `docker cp`. Dependency changes (package.json) still require `docker compose build`.
+The script compiles TypeScript locally via `pnpm install`, then copies `dist/` directories into containers via `docker cp`. Dependency changes (package.json) still require an image rebuild. The script's preflight check looks for `CLUSTERIO_TARGET: custom` in `docker-compose.yml` and exits 1 when it is absent.
 
 ## CI Pipeline
 
 The GitHub Actions workflow (`.github/workflows/docker-build.yml`):
 1. Builds both images with Docker Buildx + GHA cache
-2. Pushes to GHCR on non-PR events (tagged: latest, the Clusterio version, semver, branch)
-3. Runs integration tests:
+2. Pushes to GHCR on non-PR events, once the `gates`, `test` and `consumer-smoke` jobs pass (tags: the branch or git tag name, `<branch>-clusterio-<version>` on branch pushes, plus `latest` and the Clusterio version on `main`)
+3. Runs integration tests (the `test` job):
    - Database seeding (admin user)
    - Mod seeding (upload + host pre-cache)
    - Instance seeding (create, save upload, auto-start control)
@@ -337,8 +350,7 @@ Releases happen on the default branch (`main`) and build the **`release`** targe
 
 clusterio-docker's version **tracks the Clusterio version**, with a docker-layer revision suffix
 `.rN` for rebuilds/fixes that ship on the same Clusterio version. There is **no** separate repo
-SemVer (the old `vMAJOR.MINOR.PATCH` scheme is retired; the `v1.1.0` git tag stays in history but
-no new `v*` tags are cut). Tags carried by a build:
+SemVer: a `v*` git tag matches no workflow trigger. Tags carried by a build:
 
 - `:<CLUSTERIO_VERSION>` — e.g. `:2.1.2` — the bundled Clusterio version. **Moves** as the docker layer rebuilds.
 - `:<CLUSTERIO_VERSION>.rN` — e.g. `:2.1.2.r1` — the **immutable** pin (cut a git tag to mint one). `N` resets to `r1` on each Clusterio bump; bump it for docker-layer changes on the same Clusterio version.
@@ -347,8 +359,7 @@ no new `v*` tags are cut). Tags carried by a build:
 **Separator is `.` not `-`**: a hyphen (`2.0.0-alpha.27-r1`) makes `27-r1` a single alphanumeric
 SemVer prerelease identifier. SemVer precedence ranks alphanumeric identifiers above purely-numeric
 ones at the same field position, so that tag would sort as *newer* than `2.0.0-alpha.28` under any
-SemVer-aware tooling (Renovate, Dependabot, etc.) — the exact bug flagged for Clusterio's own
-`22b`-style pre-release tags. The `.` keeps `rN` a separate dot-delimited identifier, so numeric
+SemVer-aware tooling (Renovate, Dependabot, etc.). The `.` keeps `rN` a separate dot-delimited identifier, so numeric
 comparison on the Clusterio version field (`27` vs `28`) still wins first.
 
 **Revision (`.rN`) discipline**: increment `.rN` for any image-affecting change on an unchanged
@@ -361,9 +372,9 @@ moving to a new pin. There is no separate "major" signal.
 
 ### Branch-Based Custom Builds
 
-This is the **dormant `custom`/fork path** — retained for a future Factorio line that npm may lag
-(branch `factorio-<X.Y>` off `main`) and for testing a Clusterio fork branch. The active default
-`main` builds `release` (npm); only the paths below build `custom`.
+The `custom`/fork path is for a Factorio line the npm release does not support (branch
+`factorio-<X.Y>` off `main`) and for testing a Clusterio fork branch. `main` builds `release`
+(npm); only the paths below build `custom`.
 
 Non-main branch **pushes** automatically build from the Clusterio fork instead of npm packages (pull requests into `main`, `main`, and tags build the `release` target so CI validates exactly what gets published):
 
@@ -423,7 +434,7 @@ seed-data/
 ### instance.json
 
 Native Clusterio `InstanceConfig` format. Runtime-specific fields are auto-skipped:
-`instance.id`, `instance.name`, `instance.assigned_host`, `instance.auto_start`, `factorio.host_assigned_game_port`, `factorio.rcon_port`, `factorio.rcon_password`, `factorio.mod_pack_id`
+`instance.id`, `instance.name`, `instance.assigned_host`, `factorio.host_assigned_game_port`, `factorio.rcon_port`, `factorio.rcon_password`, `factorio.mod_pack_id`, `_warning`
 
 Set `"instance.auto_start": false` to prevent auto-starting after seeding.
 
@@ -462,11 +473,11 @@ Set `"instance.auto_start": false` to prevent auto-starting after seeding.
 ### 7. DEFAULT_MOD_PACK and DLC Mods
 **Symptom**: Instances start without DLC mods (Space Age, etc.) or export-data is missing DLC assets
 **Cause**: `DEFAULT_MOD_PACK` was set to `"Base Game 2.1"` (no DLC)
-**Fix**: Set `DEFAULT_MOD_PACK=Space Age 2.1` in controller env. If the name contains "Space Age", the entrypoint automatically enables the `space-age`, `elevated-rails`, `quality`, and `recycler` builtin mods when creating the pack (recycler is a hard dependency of space-age + quality in 2.1.x). If the name doesn't match an existing pack, it's created automatically using `DEFAULT_FACTORIO_VERSION`. Requires volume wipe + redeploy (mod pack is set on first run only).
+**Fix**: Set `DEFAULT_MOD_PACK=Space Age 2.1` in controller env. If the name contains "Space Age", the entrypoint automatically enables the `space-age`, `elevated-rails`, `quality`, and `recycler` builtin mods when creating the pack (recycler is a hard dependency of space-age + quality in 2.1.x). If the name doesn't match an existing pack, it's created automatically using `DEFAULT_FACTORIO_VERSION`. The default mod pack is set during first-run seeding only; on an existing cluster set `factorio.mod_pack_id` on each instance (README, "Changing DEFAULT_MOD_PACK after first run").
 
 ### 8. Factorio Client Credentials Must Be BuildKit Secrets, Not Build Args
-**Symptom**: `docker build --build-arg FACTORIO_CLIENT_TOKEN=… ` no longer installs the client; the build fails asking for secrets
-**Cause**: `--build-arg` values are visible via `docker history`, and the `ARG` declaration alone trips Docker's `SecretsUsedInArgOrEnv` lint. The `FACTORIO_CLIENT_USERNAME` / `FACTORIO_CLIENT_TOKEN` **build args were removed** — passing them has no effect.
+**Symptom**: `docker build --build-arg FACTORIO_CLIENT_TOKEN=… ` does not install the client; the build fails asking for secrets
+**Cause**: `--build-arg` values are visible via `docker history`, and the `ARG` declaration alone trips Docker's `SecretsUsedInArgOrEnv` lint. There are no `FACTORIO_CLIENT_USERNAME` / `FACTORIO_CLIENT_TOKEN` build args — passing them has no effect.
 **Fix**: Supply credentials as BuildKit secrets. `Dockerfile.host` mounts them at `/run/secrets/*` on a tmpfs that is discarded when the `RUN` ends, so no value reaches a layer:
 ```bash
 docker build -f Dockerfile.host --build-arg INSTALL_FACTORIO_CLIENT=true --secret id=factorio_username,env=FACTORIO_USERNAME --secret id=factorio_token,env=FACTORIO_TOKEN .
@@ -478,43 +489,43 @@ Notes: `Dockerfile.host` line 1 **must** stay `# syntax=docker/dockerfile:1` —
 **Most users should skip all of this** and use the **runtime download** — set `FACTORIO_USERNAME` + `FACTORIO_TOKEN` as host env vars and no credential touches the build. Baking is only for private/offline images that cannot reach factorio.com at container start. Published images never take this path: CI passes only `CLUSTERIO_TARGET` and `BUILD_REVISION`.
 
 ### 9. Game Client Image Is Much Larger Than Headless
-**Symptom**: Host image is ~300-500 MB larger than expected
-**Cause**: `INSTALL_FACTORIO_CLIENT=true` downloads the full game client (~450 MB) in addition to the headless server (~100 MB)
-**Fix**: Only enable for hosts that need export-data functionality. The headless server is sufficient for running game instances — the client is only needed for Clusterio's graphical asset export.
+**Symptom**: A locally built host image is much larger than the published one
+**Cause**: `INSTALL_FACTORIO_CLIENT=true` bakes the full game client into the image (and `BAKE_FACTORIO_HEADLESS=true` a headless server)
+**Fix**: Only enable it for hosts that need export-data with icons. The headless server is sufficient for running game instances — the client is only needed for Clusterio's graphical asset export.
 
 ### 10. External Plugin Installs Duplicate @clusterio Packages
 **Symptom**: Plugin permissions "not found", events not firing, or other singleton-mismatch errors
 **Cause**: `npm install` in the plugin directory installs `@clusterio/lib` (and other peer deps) locally into the plugin's `node_modules/`. This creates two separate module instances — the plugin registers permissions/events in its copy while the controller reads from the monorepo copy.
-**Fix**: `install-plugins.sh` now removes `node_modules/@clusterio` after `npm install`, forcing Node.js to resolve upward to the shared monorepo copies. If you see this issue, ensure you're using the latest image.
+**Fix**: `install-plugins.sh` removes `node_modules/@clusterio` after `npm install`, forcing Node.js to resolve upward to the image's copies. CI's "Verify external plugin lifecycle" step checks this with the `ci_fixture` plugin.
 
 ### 11. Headless Factorio Directory Must Be a Multi-Version Parent
-**Symptom**: Host logs "A newer version of factorio is available (X) but must be manually downloaded"; headless never downloads/updates and isn't driven by the mod pack's Factorio version
-**Cause**: `host.factorio_directory` points at a **direct** install (a dir with `data/` + version file). Clusterio's runtime download (`checkForUpdates`) short-circuits on direct installs.
+**Symptom**: The host never downloads or updates the headless server, and the installed version isn't driven by the mod pack's Factorio version
+**Cause**: `host.factorio_directory` points at a **direct** install (a dir with `data/` + version file). Clusterio does not download Factorio into a direct install.
 **Fix**: `host.factorio_directory` must be a **non-direct, multi-version parent**. The entrypoint sets it to `/opt/factorio` — empty by default, so Clusterio downloads the target version into a versioned subdir at runtime. An optional baked headless (`BAKE_FACTORIO_HEADLESS=true`) goes into a **subdirectory** of `/opt/factorio`, never directly into it (that would re-disable runtime download). (The game **client** path for export hosts is intentionally a direct install and does not auto-update.)
 
 ### 12. Clusterio 2.0 Plugins Are ES Modules With `.js` Entrypoint Names
-**Symptom**: An external plugin npm-installs and is listed, but never logs its load line; the controller/host reports `ERR_MODULE_NOT_FOUND` for an entrypoint, or "must export either a default function or ControllerPlugin class"
-**Cause**: Clusterio 2.0 loads plugins with `import()`. Entrypoint paths without the `.js` extension (`controllerEntrypoint: "controller"`) no longer resolve, and a CommonJS `plugin` export is only detected in the `module.exports = { plugin }` form.
-**Fix**: Convert the plugin per upstream `docs/devs/plugin-migration-to-2.0.md`: `"type": "module"`, `.js` in entrypoint names, default async function entrypoints (class exports still load with a deprecation warning). `seed-data/external_plugins/ci_fixture` is the minimal example. Clusterio 2.1 additionally rejects a web module built with webpack ("Incompatible dist/web/manifest.json, the plugin must be rebuilt with Vite") — see `docs/plugin-development.md` and upstream `docs/devs/plugin-migration-to-2.1.md`.
+**Symptom**: An external plugin npm-installs and is listed, but never loads; the controller/host reports that an entrypoint module cannot be found, or that the entrypoint has no usable export
+**Cause**: Clusterio 2.0 loads plugins with `import()`. Entrypoint paths without the `.js` extension (`controllerEntrypoint: "controller"`) do not resolve, and a CommonJS `plugin` export is only detected in the `module.exports = { plugin }` form.
+**Fix**: Convert the plugin per upstream `docs/devs/plugin-migration-to-2.0.md`: `"type": "module"`, `.js` in entrypoint names, default async function entrypoints (class exports still load with a deprecation warning). `seed-data/external_plugins/ci_fixture` is the minimal example. Clusterio 2.1 additionally rejects a web module built with webpack (it must be rebuilt with Vite) — see `docs/plugin-development.md` and upstream `docs/devs/plugin-migration-to-2.1.md`.
 
 ### 13. `config set` Against a Missing Config File Fails
-**Symptom**: `Failed to load config-*.json: ENOENT` from any `config set`/`list`/`show` on a fresh volume
-**Cause**: Clusterio 2.0 creates config files only on request (`config create` or `--create-config`); alpha versions initialised a missing file silently.
+**Symptom**: Any `config set`/`list`/`show` on a fresh volume fails because the config file cannot be loaded
+**Cause**: Clusterio creates config files only on request (`config create`).
 **Fix**: The entrypoints, `configure-host.cjs` and `verify-cli.cjs` run `config create` first (a no-op once the file exists). Tooling that drives the native CLI against a new path must do the same; pre-start hooks run after the file exists.
 
 ### 14. `/metrics` Requires a Token
-**Symptom**: Prometheus scrapes return `401` (no token) or `403` (user lacks the permission)
-**Cause**: Clusterio 2.0 gates `/metrics` behind the `core.controller.metrics` permission; hosts expose no HTTP metrics endpoint at all.
-**Fix**: Create a role with that permission and a dedicated user (`#prometheus`), mint a token with `clusteriocontroller bootstrap generate-user-token`, and pass it via `authorization:` in `scripts/prometheus.yml` (see the README's Prometheus section). Two traps in that recipe: `generate-user-token` is a separate process that reads `users.json` from disk, and a user created via `clusterioctl` only reaches the file on the controller's next autosave (`controller.autosave_interval`, 60 s) — wait or restart first; and run it as `clusterio` (`docker exec --user clusterio`), or the bootstrap process leaves root-owned log files that break the controller's log rotation.
+**Symptom**: Prometheus scrapes are refused (no token, or the token's user lacks the permission)
+**Cause**: Clusterio gates `/metrics` behind the `core.controller.metrics` permission; hosts expose no HTTP metrics endpoint at all.
+**Fix**: Create a role with that permission and a dedicated user (`#prometheus`), mint a token with `clusteriocontroller bootstrap generate-user-token`, and pass it via `authorization:` in `scripts/prometheus.yml` (see the README's Prometheus section). Two traps in that recipe: `generate-user-token` is a separate process that reads `users.json` from disk, and a user created via `clusterioctl` only reaches the file on the controller's next autosave (`controller.autosave_interval`) — wait or restart first; and run it as `clusterio` (`docker exec --user clusterio`), or the bootstrap process leaves root-owned log files that break the controller's log rotation.
 
 ### 15. Host IDs Are Not the Number in the Host Name
 **Symptom**: `clusterioctl instance assign X 1`, `host config list 1` or a script that addresses `clusterio-host-N` as host id `N` does not reach that host
-**Cause**: Clusterio 2.1 controllers assign host ids at random when the host is created (`clusterio-host-1` gets e.g. `1603504663`). Hosts of clusters upgraded from 2.0.3 keep the ids they had. Host names are not unique in Clusterio 2.1.
+**Cause**: Clusterio 2.1 controllers assign host ids at random when the host is created. Hosts of clusters upgraded from 2.0.3 keep the ids they had. Host names are not unique in Clusterio 2.1.
 **Fix**: Look the id up (`docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json host list --output json`, or `docker exec clusterio-controller node /scripts/host-token.cjs id /clusterio/tokens/clusterio-host-N.token`) and address hosts by id; address a host by name only when one host has it.
 
 ### 16. `subspace_storage` Instances Refuse to Start Without Its Mod
-**Symptom**: Instance start fails with `Mod pack … does not have the mods required by the loaded plugins. Plugin subspace_storage requires subspace_storage >= 1.99.0 (missing)`; seeding logs `WARNING: instance '…' cannot start: its mod pack lacks mods a loaded plugin requires` followed by that error
-**Cause**: Clusterio 2.1 plugins can declare required mods; `subspace_storage` requires the `subspace_storage` mod (>= `1.99.0`) in the instance's mod pack. The plugin is loaded by default.
+**Symptom**: Instance start fails with an error that its mod pack does not have the mods required by the loaded plugins; seeding logs `WARNING: instance '…' cannot start: its mod pack lacks mods a loaded plugin requires` followed by the controller's error
+**Cause**: Clusterio 2.1 plugins can declare required mods; `subspace_storage` requires the `subspace_storage` mod in the instance's mod pack. The plugin is loaded by default.
 **Fix**: One of (`ctl` below = `docker exec clusterio-controller npx clusterioctl --config /clusterio/tokens/config-control.json`):
 - Add `subspace_storage` and its dependency `clusterio_lib` to the mod pack. A controller with Factorio credentials downloads both zips at start, for the default mod pack's Factorio version, into its mod store, and adds them to no pack. `FACTORIO_USERNAME`/`FACTORIO_TOKEN` reach the controller's config only on its first run; on an existing cluster set them with `ctl controller config set controller.factorio_username <name>` and `… controller.factorio_token <token>`.
 - Stop the plugin loading: on an existing instance `ctl instance config set <instance> subspace_storage.load_plugin false`; for instances seeding creates, `"subspace_storage.load_plugin": false` in `instance.json` (it applies only to instances seeding creates); controller-wide `ctl controller config set subspace_storage.load_plugin false`, then restart the controller.
@@ -524,7 +535,7 @@ The seeded `TestInstance`/`TestInst2` set `subspace_storage.load_plugin: false`.
 
 ### 17. Logs Older Than 30 Days Are Deleted
 **Symptom**: Old files under `/clusterio/logs/cluster`, `/clusterio/logs/controller` or `/clusterio/logs/host` disappear, starting with the first start on Clusterio 2.1
-**Cause**: `controller.log_retention_days` and `host.log_retention_days` default to `30`; deletion runs at start and hourly.
+**Cause**: Clusterio deletes log files older than `controller.log_retention_days` / `host.log_retention_days` (default `30`), beginning when the server starts.
 **Fix**: Set `CLUSTERIO_LOG_RETENTION_DAYS` on the controller and on each host (`0` keeps logs forever). The entrypoints write it before the server starts, so set it before the first start on Clusterio 2.1 to keep older logs. A value that is not a whole number stops the container.
 
 ### 18. Host Waits for the Controller or Its Token Is Rejected

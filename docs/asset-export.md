@@ -33,7 +33,7 @@ FACTORIO_TOKEN=your_token
 ```
 
 On next start, any host **without** `SKIP_CLIENT=true` that has no client yet downloads it into
-the `factorio-client` volume (one-time, ~450 MB). Details that matter:
+the `factorio-client` volume (one-time). Details that matter:
 
 - `FACTORIO_CLIENT_BUILD` — `expansion` (default, includes Space Age) or `alpha` (base game).
 - `FACTORIO_CLIENT_TAG` — `stable` (default) or a specific version.
@@ -44,8 +44,8 @@ the `factorio-client` volume (one-time, ~450 MB). Details that matter:
 The build-time alternative (`INSTALL_FACTORIO_CLIENT=true` in the dev overlay / `Dockerfile.host`)
 exists for offline/private images — prefer the runtime path. If you do bake, credentials are
 **BuildKit secrets**, not build args: `--secret id=factorio_username,env=FACTORIO_USERNAME
---secret id=factorio_token,env=FACTORIO_TOKEN` (the old `FACTORIO_CLIENT_USERNAME` /
-`FACTORIO_CLIENT_TOKEN` build args were removed — see CLAUDE.md pitfall #8).
+--secret id=factorio_token,env=FACTORIO_TOKEN` (there are no `FACTORIO_CLIENT_USERNAME` /
+`FACTORIO_CLIENT_TOKEN` build args — see CLAUDE.md pitfall #8).
 
 ## Running the export: `EXPORT_HOST`
 
@@ -64,8 +64,7 @@ WARNING, not fatal: the cluster still comes up, without export data.
 
 **If that host has no game client the export still succeeds** — prototypes, locale and settings
 are exported, but no icons are (the spritesheet is empty), so the web UI has no icons. The
-host log has a WARN: `… icon files of the base game were not found in …, icons using them were
-not exported. The headless build of Factorio has no graphics and no full install was found …`.
+host log has a WARN saying that the base game's icon files were not found.
 Seeding logs a NOTE when this happens. Once the host has a client, regenerate (below).
 
 Clusterio 2.1 can read the base game's icons from a full install of the same Factorio version
@@ -116,20 +115,19 @@ The default mod pack's `ExportManifest` assets, served to the web UI:
 - `metadata` — sprite coordinates + category membership (item, recipe, signal, technology,
   planet, quality, entity, static)
 
-The extended per-category sheets are mainlined since Clusterio **alpha.23** (clusterio#838);
-the web-UI consumption API changed in **alpha.24** (clusterio#875 — `useExportPrototypeMetadata`,
-`FactorioIcon`). See [consumer-integration.md](consumer-integration.md).
+See [consumer-integration.md](consumer-integration.md#automatic-asset-export-export-data) for
+the consumer setup.
 
 ## Troubleshooting
 
-- **"Unable to find Factorio version X"** in the *host* log (not the instance's
-  factorio-current.log): the resolved Factorio directory doesn't contain the version an
+- **An instance does not start because its Factorio version cannot be found** (the error is
+  in the *host* log, not the instance's factorio-current.log): the resolved Factorio directory doesn't contain the version an
   instance pins. The entrypoint logs which version(s) it found at startup — compare against
   `factorio.version` in the instance config. A client install is a *single* version; keep the
   client's `FACTORIO_CLIENT_TAG` aligned with your instances' target version.
 - **No icons in the web UI**: the last export ran on a headless host (credentials missing,
-  or `SKIP_CLIENT=true`). The export host's log has the WARN `… icon files of the base game
-  were not found …`. Get a client onto the export host, then regenerate.
+  or `SKIP_CLIENT=true`). The export host's log has a WARN that the base game's icon files
+  were not found. Get a client onto the export host, then regenerate.
 - **`regenerate-export-data.sh` exits 3 or 4**: 3 means the instance's host is headless; 4
   means the instance is unassigned or its host could not be queried. Nothing was changed —
   see "An export replaces…" above.

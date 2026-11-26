@@ -15,11 +15,12 @@ Build the release selection you intend to test, then run one acceptance command:
 docker build -f Dockerfile.controller --build-arg CLUSTERIO_PLUGINS=none -t acceptance-controller .
 docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t acceptance-host .
 node tests/consumer-smoke.mjs acceptance-controller acceptance-host \
-  --previous-host ghcr.io/clusterio/clusterio-docker-host:2.1.1.r1 \
-  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:2.1.1.r1
+  --previous-host ghcr.io/clusterio/clusterio-docker-host:<previous-pin> \
+  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:<previous-pin>
 ```
 
-The previous images must be available locally (pull them first when needed). CI pins their
+`<previous-pin>` is a published pin of the previous Clusterio version. The previous images
+must be available locally (pull them first when needed). CI pins their
 digests (`PREVIOUS_HOST_IMAGE`, `PREVIOUS_CONTROLLER_IMAGE`).
 Default expected plugins are `none`; pass `--plugins global_chat` for a selected image, or the
 explicit comma-separated six names for a full image. Use `--skip-package` for custom
@@ -34,7 +35,7 @@ needs network access; it runs on release-target images only.
 
 Hosts the cases restart are stopped before they are replaced, and count as ready only when
 they are healthy **and** their own log contains `Started host`: the controller keeps a killed
-container's session as connected for up to 60 s, which would otherwise satisfy readiness.
+container's session as connected for a while, which would otherwise satisfy readiness.
 Real host tokens reach containers through the docker client's environment, not argv.
 
 | Case | Contract |
@@ -92,43 +93,12 @@ it creates no checkout and excludes local dependencies and Git metadata. It reco
 the source revision, tracked modifications and context hash. Adjust the expected plugin
 list deliberately when testing a fork with a different supported set.
 
-## Review evidence
+## Recording a run
 
-Local acceptance on 2026-09-10 (reports use UTC):
+Record an acceptance run in the pull request it supports: the command, the image ids, and
+each case as passed, failed or unverified. `result.json` in the run's report directory holds
+all of these. `ci-artifacts/` is not tracked, so a report directory name alone identifies
+nothing to another reader.
 
-| Image under test | Evidence | Result |
-|---|---|---|
-| Original PR host at `c385326` | `cd-smoke-f768fc27-270` (rotation), `cd-smoke-4bc1a977-7d8` (overrides) | Failed: retained old token and old controller URL |
-| Original PR host at `c385326` | `cd-smoke-112e620d-414` (saved identity), `cd-smoke-0c8b53fd-586` (zero-padded ID) | Failed: registered host never reached healthy readiness |
-| Revised full release, native alpha.27 | `cd-smoke-709da0bf-2ab` | All eight startup scenarios and native configuration checks passed |
-| Revised custom images from canonical source `9e727f9`, native alpha.25 | `cd-smoke-3434376f-94a` | All eight startup scenarios and native configuration checks passed |
-| 2026-10-14: Clusterio 2.0.1 release at `b5de653` (PR #55) — native 2.0.1 on both roles, six bundled plugins incl. `player_sync`, previous host alpha.27.r7 | `cd-smoke-25769f81-ae5` | All ten startup scenarios (incl. `stale-lock`, the ESM `--import` shutdown fault and the alpha.27 → 2.0.1 upgrade), packaged-plugin and native configuration checks passed |
-| 2026-10-14: the same test file against images built from `6cdf8ee` (pre-#54) | `cd-smoke-3d2dcaf0-ae9` | Failed only at `stale-lock` (`LockFileExistsError`: the host image predated #54); every earlier check passed |
-| 2026-10-15: Clusterio 2.0.2 release at `b2368b0` (PR #56) — native 2.0.2 on both roles, six bundled plugins, previous host alpha.27.r7 | `cd-smoke-c87a6fc6-e08` | All ten startup scenarios, packaged-plugin and native configuration checks passed |
-| 2026-10-28: Clusterio 2.0.3 release at `d2c0707` — native 2.0.3 on both roles, six bundled plugins, previous host alpha.27.r7 | `cd-smoke-ccf9692a-904` | All ten startup scenarios, packaged-plugin and native configuration checks passed |
-| 2026-10-28: the same images, `--case upgrade` with previous host `2.0.2.r1` | `cd-smoke-ebdf3be2-d17` | Failed in the fixture step, before the candidate ran: the harness writes previous-image configuration with `config set` and no `config create`, which a 2.0 CLI rejects on a missing file |
-| 2026-10-29: Clusterio 2.0.3 images at `b0c2cc1`, harness fixture runs `config create` first when the previous CLI supports it, `--case upgrade` with previous host alpha.27.r7 | `cd-smoke-f0d6b6e5-1d3` | Upgrade, packaged-plugin and native CLI checks passed; the fixture tolerates the pre-2.0 CLI's `Unknown argument: create` and lets `config set` create the file |
-| 2026-10-29: the same images and harness, `--case upgrade` with previous host `2.0.2.r1` | `cd-smoke-b82e8ad6-6a4` | Upgrade, packaged-plugin and native CLI checks passed: 2.0.2-written configuration survives candidate startup |
-| 2026-11-21: Clusterio 2.0.3 images built without cache from the working tree on `6e55181` (Node 24.22.3 base, `@clusterio/lib` pinned; every `@clusterio/*` package in both images read back as 2.0.3), six bundled plugins, previous host `2.0.3.r2` by digest | `cd-smoke-e1832200-78c` | All ten startup scenarios (incl. the `2.0.3.r2` → candidate upgrade case), native CLI plugin-selection and native configuration checks passed; run with `--skip-package`, as CI's publication acceptance is |
-| 2026-11-22: Clusterio 2.1.1 images built without cache from `f042149` (every `@clusterio/*` package in both images read back as 2.1.1, Node 24.22.3), six bundled plugins, previous controller and host `2.0.3.r2` by digest | `cd-smoke-26feab40-744` | All fourteen cases (incl. `host-wipe`, `scale-out`, `controller-wipe`, and `cluster-upgrade` from volumes written by the `2.0.3.r2` images), packaged-plugin, native CLI plugin-selection and native configuration checks passed |
-| 2026-11-22: the same commit built with `CLUSTERIO_PLUGINS=none` and with `global_chat`, no previous images, as CI's `consumer-smoke` job runs | `cd-smoke-7b21bd8e-641` (none), `cd-smoke-bcade6d7-c8c` (global_chat) | Both passed every case that needs no previous image; `upgrade` and `cluster-upgrade` recorded as unverified |
-| 2026-11-25: Clusterio 2.1.2 images built from the working tree on `dbcb8b6` (`CLUSTERIO_NPM_PLUGINS`; exact versions and npm `overrides` in `/clusterio/package.json`; the controller container exits when its controller stops before answering HTTP), controller `070a12d8ef27`, host `0da64f77e5b9`, six bundled plugins, previous controller and host `2.1.1.r1` by digest (the workflow's pins), packaged-plugin check included | `cd-smoke-d2207232-8d9`; from the published `2.1.2.r1` images: `cd-smoke-5f9a94f0-13c`, `cd-smoke-80c963fe-033` | All fifteen cases passed. `npm-plugins`: `timeshade@0.1.1` installed from the registry at host start, listed, its instance entrypoint imported, every `@clusterio/*` package still at 2.1.2, a restart reused the install, and a path, a bundled plugin name and a package without the `clusterio-plugin` keyword each stopped the host with exit 1. `failures`: a controller whose config a hook had made unreadable logged `ERROR: the controller stopped before it answered HTTP` and its container exited non-zero. `upgrade` and `cluster-upgrade` passed again from the published `2.1.2.r1` images. The `npm-plugins` case was then cut to one refused value (the others are unit-tested) and passed again on a rebuild (`cd-smoke-ca50f008-2d0`, controller `c02011edfa79`, host `bd7b724c4b2d`). Outside the runner, once each on the same images: a controller with `CLUSTERIO_NPM_PLUGINS=timeshade@0.1.1` logged `Loaded plugin timeshade`, and after its network was removed a restart reused the install; a new container without a network, a package that does not exist, and a folder mounted inside `/clusterio/node_modules` each exited 1 with `ERROR: CLUSTERIO_NPM_PLUGINS`; under `--restart unless-stopped` without a network the container had restarted twice after 200 s; a controller started with `@hornwitser/server_select@2.0.1` (passes the installer, cannot load on Clusterio 2.x) exited 1; a derived image built from another working directory with two unquoted package arguments installed both into `/clusterio`, and a derived image built as in the README started without a network, with the variable set and unset, and logged `Loaded plugin timeshade`. Clusterio's update command (`npm update --save @clusterio/controller @clusterio/plugin-global_chat`): on the published `2.1.1.r1` controller it moved both and lib to 2.1.2; on this tree built at 2.1.1 it exited 0 and changed nothing, and a pinned `npm install --save @clusterio/plugin-global_chat@2.1.2` failed with `EOVERRIDE`. This tree built at 2.0.3 refused `clusterio-discord@0.3.6` (`was built for @clusterio/lib ~2.1.0; this image is Clusterio 2.0.3`) and exited 1. Simulated: the `custom`-target refusal, by editing `BUILD_INFO` in a release image. Not covered: a real `custom`-target image, the reduced-plugin builds, and the workflow's `test` job |
-
-Every listed run cleaned up its disposable resources. Assertions read native effective
-configuration independently of startup messages. The two final runs include configuration
-written by the r7 release on a fresh volume. Reports retain image IDs and actual native
-CLI versions: custom BUILD_INFO's declared version alone is not evidence of the source
-package version. The release selections in CI also exercise packaged plugin installation.
-
-Local review caught an empty-environment compatibility regression. Its failing regression
-now passes, and the final rotation scenarios confirm empty optional overrides fall back
-correctly. The first fresh-volume upgrade fixture needed normal runtime directory ownership
-before invoking the previous CLI; that harness setup was corrected before the final runs.
-
-The first native invalid-write fixture used malformed port text, but Clusterio accepts
-that string at configuration-write time. That was a harness assumption, not proof of
-rejection. The corrected fixture uses an invalid numeric host ID, which the pinned CLI
-rejects while returning zero; readback detects the rejected write.
-
-Earlier native startup evidence is retained in git history. The fixture has no web bundle
-or host implementation, so its two native plugin warnings are expected.
+CI uploads the reports of its own runs as the `publication-candidate-acceptance` and
+`consumer-smoke-<plugins>` artifacts.

@@ -1,8 +1,7 @@
 # Running multiple Clusterio clusters on one machine
 
-Both known production consumers of these images run **two clusters side-by-side on one Docker
-host** and each independently maintained a private collision map. This doc makes the rules
-first-class. Four global namespaces can collide; parametrize all four per cluster.
+Four namespaces are global to a Docker host and collide when two clusters run side by side on
+it; parametrize all four per cluster.
 
 ## The four collision surfaces
 

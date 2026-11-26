@@ -1,8 +1,10 @@
 #!/bin/bash
 # install-plugins.sh
-# Shared helper: installs external plugins if mounted.
+# Shared helper: installs external plugins if mounted, and the npm plugins named in
+# CLUSTERIO_NPM_PLUGINS.
 # Usage: source /path/to/install-plugins.sh
 #        install_external_plugins "/clusterio/external_plugins"
+#        install_npm_plugins
 
 install_external_plugins() {
   local plugins_dir="$1"
@@ -47,4 +49,11 @@ install_external_plugins() {
       fi
     fi
   done
+}
+
+# Installs the plugins named in CLUSTERIO_NPM_PLUGINS from the npm registry. Fatal (the caller
+# runs under `set -e`): Clusterio is not started without a plugin it was told to run.
+install_npm_plugins() {
+  [ -n "${CLUSTERIO_NPM_PLUGINS:-}" ] || return 0
+  gosu clusterio node /scripts/install-npm-plugins.cjs "$CLUSTERIO_NPM_PLUGINS"
 }

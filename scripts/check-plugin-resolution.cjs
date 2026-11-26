@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
+const { satisfier, peerExcludes } = require("./clusterio-packages.cjs");
 function verifyPlugins(entries, root = "/clusterio") {
   const runtime = createRequire(path.join(root, "package.json"));
   const shared = ["@clusterio/lib", "@clusterio/web_ui"];
@@ -26,10 +27,10 @@ function verifyPlugins(entries, root = "/clusterio") {
       } catch { throw new Error(name + ": cannot resolve required shared dependency " + dependency); }
       if (actual !== expected) throw new Error(name + ": duplicate " + dependency + "; install compatible peer dependencies");
       const range = pkg.peerDependencies?.[dependency];
-      if (range && !range.startsWith("workspace:")) {
-        const semver = runtime("semver");
+      if (range) {
         const version = JSON.parse(fs.readFileSync(runtime.resolve(dependency + "/package.json"))).version;
-        if (!semver.satisfies(version, range, {includePrerelease:true})) throw new Error(name + ": incompatible peer requirement for " + dependency);
+        const satisfies = satisfier(root) ?? (() => { throw new Error(name + ": cannot check the peer requirement for " + dependency + ": semver is not installed"); });
+        if (peerExcludes(range, version, satisfies)) throw new Error(name + ": incompatible peer requirement for " + dependency);
       }
     }
   }

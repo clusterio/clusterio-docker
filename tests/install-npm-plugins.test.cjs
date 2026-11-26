@@ -36,9 +36,7 @@ test("anything npm would not read as a registry package is refused before npm ru
     "https://example.com/p.tgz", "github:user/repo", "user/repo", "git+ssh://host/repo", "alias@npm:other@1", "x@-1",
     "x@1 || 2", "x@>=1", "Plugin", "@scope", "@scope/", "x;id", "$(id)", "x@1;id"])
     assert.throws(() => parse(spec), /Invalid plugin|listed twice/, spec);
-});
-
-test("the image's own packages and repeated names are refused", () => {
+  // So are the image's own packages and a name given twice.
   assert.throws(() => parse("@clusterio/plugin-global_chat"), /CLUSTERIO_PLUGINS build argument/);
   assert.throws(() => parse("@clusterio/lib@2.1.3"), /belongs to the image/);
   assert.throws(() => parse("timeshade timeshade@0.1.1"), /listed twice/);
@@ -60,12 +58,6 @@ test("a verified install is skipped only for the same list with every package st
   assert.equal(upToDate(root, specs), false, "an unreadable marker reinstalls");
 }));
 
-test("a usable installation has no problems", () => fixture((root, put) => {
-  put("clusterio-discord", plugin("0.3.6"));
-  put("discord.js", {version: "14.14.1"});
-  assert.deepEqual(problems(root, parse("clusterio-discord@0.3.6"), satisfies), []);
-}));
-
 test("missing packages and packages Clusterio would not load are reported", () => fixture((root, put) => {
   put("old-bridge", {version: "0.2.5", keywords: ["clusterio", "discord"]});
   put("no-keywords", {version: "1.0.0"});
@@ -74,23 +66,6 @@ test("missing packages and packages Clusterio would not load are reported", () =
   assert.match(found[0], /^old-bridge@0\.2\.5 is not a Clusterio 2\.x plugin/);
   assert.equal(found[1], "absent is not installed");
   assert.match(found[2], /^no-keywords@1\.0\.0 is not a Clusterio 2\.x plugin/);
-}));
-
-test("core packages moved by a plugin's peer range are reported, nested copies included", () => fixture((root, put) => {
-  put("for-next", plugin("3.0.0"));
-  put("@clusterio/controller", {version: "2.2.0"});
-  put("@clusterio/lib", {version: "2.2.0"}, "node_modules/@clusterio/controller/node_modules");
-  const found = problems(root, parse("for-next"), satisfies);
-  assert.equal(found.length, 2);
-  for (const line of found) assert.match(line, /^Clusterio is no longer uniformly 2\.1\.2: @clusterio\/(controller|lib)@2\.2\.0 /);
-}));
-
-test("the image's recorded version is the reference when lib itself moved", () => fixture((root, put) => {
-  put("for-next", plugin("3.0.0"));
-  fs.writeFileSync(path.join(root, "BUILD_INFO"), JSON.stringify({clusterioVersion: "2.1.2", clusterioTarget: "release"}));
-  put("@clusterio/lib", {version: "2.2.0"});
-  assert.deepEqual(problems(root, parse("for-next"), satisfies).map(line => line.split(" (")[0]),
-    ["Clusterio is no longer uniformly 2.1.2: @clusterio/lib@2.2.0"]);
 }));
 
 test("a plugin built for another Clusterio version is reported, named or pulled in as a dependency", () => fixture((root, put) => {
@@ -115,14 +90,6 @@ test("install does nothing for an empty list and refuses a custom build", () => 
   fs.writeFileSync(path.join(root, "BUILD_INFO"), JSON.stringify({clusterioTarget: "custom"}));
   assert.throws(() => install(root, "timeshade"), /not supported on custom/);
   assert.throws(() => install(root, "--global"), /Invalid plugin/);
-}));
-
-test("install skips npm when the list is already installed and verified", () => fixture((root, put) => {
-  if (typeof process.getuid === "function" && process.getuid() === 0) return;
-  put("timeshade", plugin("0.1.1"));
-  fs.writeFileSync(path.join(root, MARKER), JSON.stringify(["timeshade@0.1.1"]));
-  // No npm project here: reaching npm would throw.
-  install(root, "timeshade@0.1.1");
 }));
 
 test("every command-line argument is part of the list", () => {

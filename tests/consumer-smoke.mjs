@@ -363,15 +363,13 @@ try {
     // A restart reuses the install; only a recreated container goes back to the registry.
     docker("restart","-t","60",host);await hostReady(host);
     assert.ok(logsOf(host).includes("npm plugins already installed: "+spec));
-    for(const [value,message] of [["../plugin","Invalid plugin"],["@clusterio/plugin-global_chat","belongs to the image"],
-      ["@hornwitser/discord_bridge@0.2.5","is not a Clusterio 2.x plugin"]]) {
-      const name=run+"-bad-plugin";
-      create(name,report.images.host,["-e","CLUSTERIO_NPM_PLUGINS="+value,"-e","HOST_NAME=clusterio-host-1"]);docker("start",name);
-      assert.equal(await exitCodeOf(name,"refused plugin "+value),1);
-      assert.ok(logsOf(name).includes("ERROR: CLUSTERIO_NPM_PLUGINS: ") && logsOf(name).includes(message),value);
-      assert.ok(!logsOf(name).includes("Waiting for"),"the host went on after a refused plugin");
-      remove(name);
-    }
+    // A refused value stops the container before the host goes on. Which values are refused is unit-tested.
+    const name=run+"-bad-plugin";
+    create(name,report.images.host,["-e","CLUSTERIO_NPM_PLUGINS=../plugin","-e","HOST_NAME=clusterio-host-1"]);docker("start",name);
+    assert.equal(await exitCodeOf(name,"refused plugin"),1);
+    assert.ok(logsOf(name).includes("ERROR: CLUSTERIO_NPM_PLUGINS: Invalid plugin"));
+    assert.ok(!logsOf(name).includes("Waiting for"),"the host went on after a refused plugin");
+    remove(name);
     await restartHost();
   }); else if(options.case==="all" || options.case==="npm-plugins") {
     report.cases.push({name:"npm-plugins",status:"unverified",reason:"Needs release-target images"});

@@ -82,10 +82,14 @@ if [ -n "$MOD_PACK_ID" ] && [ ${#MODS_TO_ADD[@]} -gt 0 ]; then
   echo "Adding ${#MODS_TO_ADD[@]} mod(s) to mod pack $MOD_PACK_ID..."
   timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
     --add-mods "${MODS_TO_ADD[@]}" \
-    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || {
-      echo "  WARNING: Failed to add mods to mod pack (may already be added)"
-    }
-  echo "  Mods added: ${MODS_TO_ADD[*]}"
+    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || edit_rc=$?
+  if [ "${edit_rc:-0}" -eq 0 ]; then
+    echo "  Mods added: ${MODS_TO_ADD[*]}"
+  elif [ "$edit_rc" -eq 124 ] || [ "$edit_rc" -eq 137 ]; then
+    echo "  WARNING: Adding mods to the mod pack got no answer within ${CTL_ACTION_TIMEOUT}s; stopped waiting"
+  else
+    echo "  WARNING: Failed to add mods to mod pack (may already be added)"
+  fi
 fi
 
 echo "Mod seeding complete."

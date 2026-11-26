@@ -30,8 +30,9 @@ images and what they must do. State the Clusterio / Factorio versions when they 
     failure: `.seed-complete` is not written and the next start retries. Seeding skips an
     instance that already exists, so check the instance named in such an error (host
     assignment, saves) before relying on the retry.
-  - `instance config set`, a mod upload, a mod pack edit and seeding's `export-data` log the
-    WARNING a failure of that command already logged, and seeding continues.
+  - `instance config set`, a mod upload, a mod pack edit and seeding's `export-data` log a
+    WARNING, as a failure of that command already did, and seeding continues. Mod seeding
+    prints `Mods added: …` only when the mod pack edit succeeded.
   - `regenerate-export-data.sh` does not retry an `export-data` that got no answer in 300 s:
     it tries to start the instance and exits 1. The host may still be exporting.
   - Setting the default mod pack still stops the controller container when it fails, and now

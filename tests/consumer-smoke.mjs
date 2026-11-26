@@ -95,6 +95,11 @@ async function controllerApi(route,{bearer,body,controller=ctl}={}) {
   return {status:response.status,json:await response.json().catch(()=>null)};
 }
 const accepted=async(jwt,controller)=>(await controllerApi("api/host-pairing/check",{bearer:jwt,controller})).status===200;
+// Waits for a container to stop by itself and returns its exit code.
+async function exitCodeOf(name,description) {
+  await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited",description);
+  return JSON.parse(docker("inspect",name))[0].State.ExitCode;
+}
 const logsOf=name=>{
   const output=spawnSync("docker",["logs",name],{encoding:"utf8",timeout:15000,maxBuffer:8388608});
   return String(output.stdout)+String(output.stderr);
@@ -329,16 +334,14 @@ try {
     create(name,report.images.host,["-e","CLUSTERIO_HOST_TOKEN="+unsignedToken(7),"-e","HOST_NAME=clusterio-host-1"]);
     const bad=join(directory,"fail.sh");writeFileSync(bad,"exit 17\n");
     docker("cp",bad,name+":/etc/clusterio/pre-start.d/10-fail.sh");docker("start",name);
-    await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited","failing hook");
-    assert.equal(JSON.parse(docker("inspect",name))[0].State.ExitCode,17);
+    assert.equal(await exitCodeOf(name,"failing hook"),17);
     // A controller that stops before it answers HTTP takes its container with it. The hook
     // leaves it a config it cannot read; a plugin that throws while loading ends the same way.
     const dead=run+"-dead-controller", corrupt=join(directory,"corrupt.sh");
     create(dead,report.images.controller,["-e","INIT_CLUSTERIO_ADMIN=smoke"]);
     writeFileSync(corrupt,'printf "{" > "$CLUSTERIO_CONFIG_PATH"\n');
     docker("cp",corrupt,dead+":/etc/clusterio/pre-start.d/10-corrupt.sh");docker("start",dead);
-    await until(()=>JSON.parse(docker("inspect",dead))[0].State.Status==="exited","controller that cannot start");
-    assert.notEqual(JSON.parse(docker("inspect",dead))[0].State.ExitCode,0);
+    assert.notEqual(await exitCodeOf(dead,"controller that cannot start"),0);
     assert.match(logsOf(dead),/ERROR: the controller stopped before it answered HTTP/);
     remove(dead);
   });
@@ -364,14 +367,16 @@ try {
       ["@hornwitser/discord_bridge@0.2.5","is not a Clusterio 2.x plugin"]]) {
       const name=run+"-bad-plugin";
       create(name,report.images.host,["-e","CLUSTERIO_NPM_PLUGINS="+value,"-e","HOST_NAME=clusterio-host-1"]);docker("start",name);
-      await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited","refused plugin "+value);
-      assert.equal(JSON.parse(docker("inspect",name))[0].State.ExitCode,1);
+      assert.equal(await exitCodeOf(name,"refused plugin "+value),1);
       assert.ok(logsOf(name).includes("ERROR: CLUSTERIO_NPM_PLUGINS: ") && logsOf(name).includes(message),value);
       assert.ok(!logsOf(name).includes("Waiting for"),"the host went on after a refused plugin");
       remove(name);
     }
     await restartHost();
-  });
+  }); else if(options.case==="all" || options.case==="npm-plugins") {
+    report.cases.push({name:"npm-plugins",status:"unverified",reason:"Needs release-target images"});
+    if(options.case==="npm-plugins")throw Error("--case npm-plugins requires release-target images");
+  }
   if(options["previous-host"]) await scenario("upgrade",async()=>{
     remove(host);
     const previous=docker("image","inspect",options["previous-host"],"--format","{{.Id}}");

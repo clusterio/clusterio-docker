@@ -584,23 +584,21 @@ CLUSTERIO_NPM_PLUGINS=<plugin>@<version>,<other-plugin>@<version>
 - Each entry is an npm package name, optionally with `@version`, separated by commas or
   spaces. Pin the version, so the controller and the hosts install the same one.
 - The plugins and their dependencies are installed when the container starts, before
-  Clusterio does. The install lives in the container: a `restart` reuses it without touching
-  the network, and a recreated container (`docker compose up -d` after a change, a new image)
-  installs again and has to reach the npm registry.
+  Clusterio does. The install lives in the container: a `restart` reuses it without npm,
+  and a recreated container (`docker compose up -d` after a change, a new image) installs
+  again and has to reach the npm registry.
 - The container exits with `ERROR: CLUSTERIO_NPM_PLUGINS: …` when a package cannot be
   installed, is not a Clusterio 2.x plugin (no `clusterio-plugin` keyword), or was built for
   another Clusterio version than the image's (its `@clusterio/*` peer ranges are checked).
-  Clusterio is not started without a plugin it was told to run. Under `restart:
-  unless-stopped` that means the container restarts until the install succeeds, so with the
-  registry unreachable a recreated container keeps retrying (each attempt gives up after about
-  a minute).
-- Passing these checks does not mean a plugin loads. `@hornwitser/server_select@2.0.1` passes
-  them and cannot load on Clusterio 2.x: a controller started with it logs `server_select
-  plugin threw an unexpected error during startup`, then `ERROR: the controller stopped before
-  it answered HTTP`, and its container exits 1.
+  Clusterio is not started without a plugin it was told to run; a restart policy then
+  retries the install.
+- These checks do not prove that a plugin loads. A controller that stops while starting,
+  for example because a plugin throws, exits its container; `docker logs` shows the cause.
+- Do not mount folders or a volume inside `/clusterio/node_modules`: the install needs to
+  write there, and a volume would keep the previous image's packages after an image upgrade.
 - Release images only; a `custom` (source) build refuses the variable.
 - Name only packages you trust: a plugin is code that runs inside the controller and the
-  hosts, and its npm install scripts run at container start (as the `clusterio` user).
+  hosts, and installing it runs its npm install scripts.
 - Plugins installed with Clusterio's own `plugin install` command live in the container the
   same way and are gone when it is recreated. Name them here to keep them.
 

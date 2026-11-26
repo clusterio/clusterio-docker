@@ -39,11 +39,9 @@ start_log_streamer /clusterio/logs/cluster cluster
 source /scripts/install-plugins.sh
 install_external_plugins "$EXTERNAL_PLUGINS_DIR"
 
-# Plugins published on npm, named in CLUSTERIO_NPM_PLUGINS. Runs before the first Clusterio
-# command so the plugins' config fields exist; fatal if a named plugin cannot be installed.
-if [ -n "${CLUSTERIO_NPM_PLUGINS:-}" ]; then
-  gosu clusterio node /scripts/install-npm-plugins.cjs "$CLUSTERIO_NPM_PLUGINS"
-fi
+# Plugins published on npm, named in CLUSTERIO_NPM_PLUGINS. Before the first Clusterio command,
+# so the plugins' config fields exist.
+install_npm_plugins
 
 # Check if first run (no config file yet)
 FIRST_RUN=false

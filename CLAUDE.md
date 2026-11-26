@@ -36,7 +36,8 @@ clusterio-docker/
 │   ├── seed-instances.sh          # Instance creation, assignment, save upload, auto-start
 │   ├── export-host-lib.sh         # Sourced by seed-instances.sh + regenerate-export-data.sh: what counts as a headless host
 │   ├── seed-mods.sh               # Mod upload to controller
-│   ├── install-plugins.sh         # External plugin npm install
+│   ├── install-plugins.sh         # Sourced by both entrypoints: external plugin npm install, CLUSTERIO_NPM_PLUGINS
+│   ├── clusterio-packages.cjs     # Shared: @clusterio/* package names, npm overrides, version drift scan, peer-range rule
 │   ├── install-release.cjs        # Release target: npm install of @clusterio/* at CLUSTERIO_VERSION + CLUSTERIO_PLUGINS (exact versions)
 │   ├── install-npm-plugins.cjs    # CLUSTERIO_NPM_PLUGINS: installs npm-published plugins at start, verifies, fatal on failure
 │   ├── configure-host.cjs         # Host config reconciliation through the native CLI
@@ -66,7 +67,7 @@ clusterio-docker/
 
 ```
 1. Create data dirs, fix permissions, remove stale lock files from an unclean stop
-2. Install external plugins (npm install if mounted)
+2. Install external plugins (npm install if mounted); CLUSTERIO_NPM_PLUGINS set? → install-npm-plugins.cjs (any failure → exit 1)
 3. FIRST_RUN check: does config-controller.json exist on the data volume?
    ├── YES → Skip to step 4
    └── NO (first run):
@@ -98,7 +99,7 @@ clusterio-docker/
 
 ```
 1. Create data dirs, fix permissions, remove stale lock files from an unclean stop
-2. Install external plugins (npm install if mounted)
+2. Install external plugins (npm install if mounted); CLUSTERIO_NPM_PLUGINS set? → install-npm-plugins.cjs (any failure → exit 1)
 3. Pre-cache seed mods (copy from seed-mods mount → host mods dir)
 4. Runtime client download (if FACTORIO_USERNAME + FACTORIO_TOKEN set, no client yet, SKIP_CLIENT!=true)
    └── Download once → stored in external volume (/opt/factorio-client), persists across restarts

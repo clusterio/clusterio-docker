@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const {spawnSync} = require("node:child_process");
 const {parse, upToDate, problems, install, MARKER} = require("../scripts/install-npm-plugins.cjs");
 
 function fixture(run) {
@@ -123,3 +124,10 @@ test("install skips npm when the list is already installed and verified", () => 
   // No npm project here: reaching npm would throw.
   install(root, "timeshade@0.1.1");
 }));
+
+test("every command-line argument is part of the list", () => {
+  // The second argument is refused while parsing, before anything is installed: it was read.
+  const run = spawnSync(process.execPath, [path.join(__dirname, "../scripts/install-npm-plugins.cjs"), "timeshade@0.1.1", "../second"], {encoding: "utf8"});
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /ERROR: CLUSTERIO_NPM_PLUGINS: Invalid plugin '\.\.\/second'/);
+});

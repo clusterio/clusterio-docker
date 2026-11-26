@@ -234,6 +234,11 @@ npm itself no longer refuses a plugin built for another Clusterio version. The
 `CLUSTERIO_NPM_PLUGINS` installer checks the peer ranges and refuses; a bare `npm install` or
 Clusterio's own `plugin install` does not.
 
+The same pins mean Clusterio's remote update (`controller update`, `host update`, the web
+interface's update button) does not change `@clusterio/*` packages: the `npm update --save`
+behind it succeeds and leaves them at the image's version, and a bundled plugin update pinned
+to a version fails with `EOVERRIDE`. Upgrade Clusterio by changing the image tag.
+
 ## Host configuration precedence
 
 The host reconciles configuration before running pre-start hooks:

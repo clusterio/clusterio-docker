@@ -19,6 +19,10 @@ set -eo pipefail
 CONTROL_CONFIG="$1"
 MOD_PACK_ID="$2"
 SEED_MODS_DIR="/clusterio/seed-data/mods"
+# Time limits, in seconds, for clusterioctl calls: it has no client-side timeout and waits
+# forever on a controller that does not answer (see seed-instances.sh).
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-60}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-300}"
 
 if [ ! -d "$SEED_MODS_DIR" ]; then
   exit 0
@@ -42,10 +46,14 @@ declare -A MOD_VERSIONS=()
 for mod_file in "${MOD_FILES[@]}"; do
   mod_filename=$(basename "$mod_file" .zip)
   echo "  Uploading: ${mod_filename}.zip"
-  gosu clusterio npx clusterioctl --log-level error mod upload "$mod_file" \
-    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || {
-      echo "    WARNING: Failed to upload ${mod_filename}.zip (may already exist)"
-    }
+  upload_rc=0
+  timeout -k 5 "$CTL_TRANSFER_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod upload "$mod_file" \
+    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || upload_rc=$?
+  if [ "$upload_rc" -eq 124 ] || [ "$upload_rc" -eq 137 ]; then
+    echo "    WARNING: Upload of ${mod_filename}.zip got no answer within ${CTL_TRANSFER_TIMEOUT}s; stopped waiting"
+  elif [ "$upload_rc" -ne 0 ]; then
+    echo "    WARNING: Failed to upload ${mod_filename}.zip (may already exist)"
+  fi
 
   # Parse mod name and version from filename (Factorio convention: name_version.zip)
   # The last _N.N.N segment is the version; everything before is the mod name.
@@ -72,12 +80,16 @@ done
 # Add all uploaded mods to the default mod pack (if ID was provided)
 if [ -n "$MOD_PACK_ID" ] && [ ${#MODS_TO_ADD[@]} -gt 0 ]; then
   echo "Adding ${#MODS_TO_ADD[@]} mod(s) to mod pack $MOD_PACK_ID..."
-  gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
+  timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
     --add-mods "${MODS_TO_ADD[@]}" \
-    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || {
-      echo "  WARNING: Failed to add mods to mod pack (may already be added)"
-    }
-  echo "  Mods added: ${MODS_TO_ADD[*]}"
+    --config "$CONTROL_CONFIG" >/dev/null 2>&1 || edit_rc=$?
+  if [ "${edit_rc:-0}" -eq 0 ]; then
+    echo "  Mods added: ${MODS_TO_ADD[*]}"
+  elif [ "$edit_rc" -eq 124 ] || [ "$edit_rc" -eq 137 ]; then
+    echo "  WARNING: Adding mods to the mod pack got no answer within ${CTL_ACTION_TIMEOUT}s; stopped waiting"
+  else
+    echo "  WARNING: Failed to add mods to mod pack (may already be added)"
+  fi
 fi
 
 echo "Mod seeding complete."

@@ -119,6 +119,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
   # container may not be able to reach (reverse proxy, no hairpin NAT) — and clusterioctl
   # hangs on an unreachable controller instead of failing. Everything in this container
   # dials loopback; the host guard derives its own copy from CONTROLLER_URL.
+  # This call edits the file and contacts no controller, so it needs no time limit.
   gosu clusterio npx clusterioctl --log-level error config set ctl.controller_url "http://localhost:${CONTROLLER_HTTP_PORT:-8080}/" --config "$CONTROL_CONFIG"
   chown clusterio:clusterio "$CONTROL_CONFIG"
   chmod 600 "$CONTROL_CONFIG"
@@ -206,10 +207,16 @@ fi
 # Also re-attempt if a previous first run was interrupted (marker not written)
 SEED_MARKER="$DATA_DIR/.seed-complete"
 
+# Time limit, in seconds, for the clusterioctl calls below: clusterioctl has no client-side
+# timeout and waits forever on a controller that does not answer (see seed-instances.sh).
+# The mod pack lookup gets the same limit as the changes: without its answer the pack is
+# created, and the controller accepts a second pack of the same name.
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-60}"
+
 # Resolve default mod pack ID (used by both first-run seeding and ongoing mod uploads)
 DEFAULT_MOD_PACK="${DEFAULT_MOD_PACK:-Base Game 2.1}"
 DEFAULT_FACTORIO_VERSION="${DEFAULT_FACTORIO_VERSION:-2.1}"
-MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack list --output json \
+MOD_PACK_ID=$(timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack list --output json \
   --config "$CONTROL_CONFIG" 2>/dev/null \
   | node /scripts/ctl-json.cjs mod-pack-id "$DEFAULT_MOD_PACK" 2>/dev/null || true)
 
@@ -221,7 +228,7 @@ if [ -z "$MOD_PACK_ID" ] && { [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]
   echo "Mod pack '$DEFAULT_MOD_PACK' not found — creating it (Factorio $DEFAULT_FACTORIO_VERSION)..."
   # Answers {"id":…,"name":…}. A failure must not stop the controller (set -e): the
   # warning below and the one at "Setting default mod pack" report it.
-  MOD_PACK_ID=$(gosu clusterio npx clusterioctl --log-level error mod-pack create \
+  MOD_PACK_ID=$(timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack create \
     "$DEFAULT_MOD_PACK" "$DEFAULT_FACTORIO_VERSION" --output json \
     --config "$CONTROL_CONFIG" 2>/dev/null \
     | node /scripts/ctl-json.cjs field id 2>/dev/null || true)
@@ -243,7 +250,7 @@ if [ -z "$MOD_PACK_ID" ] && { [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]
     # controller. A pack missing a DLC mod is recoverable; a dead controller
     # is not. (Found the hard way: an alpha.25-era custom build did exactly
     # this and the container restart-looped until compose gave up.)
-    gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
+    timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack edit "$MOD_PACK_ID" \
       --enable-mods space-age elevated-rails quality recycler \
       --config "$CONTROL_CONFIG" >/dev/null 2>&1 \
       || echo "  WARNING: enabling DLC mods failed (core too old for one of them?) — pack '$DEFAULT_MOD_PACK' may need manual mod-pack edit" >&2
@@ -254,7 +261,9 @@ if [ "$FIRST_RUN" = true ] || [ ! -f "$SEED_MARKER" ]; then
   # Set default mod pack (required for instances to start)
   echo "Setting default mod pack: $DEFAULT_MOD_PACK"
   if [ -n "$MOD_PACK_ID" ]; then
-    gosu clusterio npx clusterioctl --log-level error controller config set \
+    # A failure here stops the entrypoint (set -e), and so does running into the time
+    # limit: the seeding below depends on it, and the next start tries again.
+    timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error controller config set \
       controller.default_mod_pack_id "$MOD_PACK_ID" \
       --config "$CONTROL_CONFIG" >/dev/null 2>&1
     echo "  Default mod pack set (ID: $MOD_PACK_ID)"

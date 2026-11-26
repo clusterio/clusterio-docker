@@ -11,6 +11,44 @@ traces back to its notice.
 Format: `## YYYY-MM-DD` heading, short bullets. Say what changed for someone running the
 images and what they must do. State the Clusterio / Factorio versions when they change.
 
+## 2026-11-26
+
+- **Seeding and export commands no longer wait forever on a controller that does not
+  answer.** Controller image only. Every `clusterioctl` call its scripts make to the
+  controller now runs under a time limit: 25 s for queries, 60 s for changes (instance
+  create, assign and config set, mod pack edits) and for the two lookups that decide whether
+  something is created, 300 s for save uploads, mod uploads and `export-data`. Before,
+  only some lookups and the start loop were bounded. Nothing to do for a cluster whose
+  seeding works. The limit ends the waiting `clusterioctl`, not what the controller or host
+  was asked to do. Measured on Clusterio 2.1.2 when the limits were chosen: a query or a
+  change answered in about half a second, an instance stop or start in under 2 s, a 300 MiB
+  upload took 4 s, and an export of Space Age from a host with the game client 6 to 7 s.
+  The lines that announce an upload, an export or the wait for hosts now name the limit.
+  At the limit:
+  - `instance create`, `instance assign` and a save upload log `ERROR: … got no answer within
+    …s; stopped waiting. The controller may still have applied it.` and count as a seeding
+    failure: `.seed-complete` is not written and the next start retries. Seeding skips an
+    instance that already exists, so check the instance named in such an error (host
+    assignment, saves) before relying on the retry.
+  - `instance config set`, a mod upload, a mod pack edit and seeding's `export-data` log a
+    WARNING, as a failure of that command already did, and seeding continues. Mod seeding
+    prints `Mods added: …` only when the mod pack edit succeeded.
+  - `regenerate-export-data.sh` does not retry an `export-data` that got no answer in 300 s:
+    it tries to start the instance and exits 1. The host may still be exporting.
+  - Setting the default mod pack still stops the controller container when it fails, and now
+    also at its limit.
+- **Seeding does not create an instance when it cannot read the instance list.** It logs
+  `ERROR: could not list the controller's instances, so cannot tell whether '…' exists. Not
+  creating it.`, counts a seeding failure, and the next start tries again. Before, a list
+  that failed was read as "the instance does not exist", and the controller accepts a second
+  instance of the same name.
+- **The wait for `HOST_COUNT` hosts** at the start of seeding polls for 75 s by the clock.
+  Before, it was 30 polls two seconds apart, however long each poll took; with a controller
+  that answers at once that came to about 73 s.
+- **Tests.** `tests/ctl-timeout.test.cjs` fails on a `clusterioctl` call to a controller
+  without `timeout` in `scripts/*.sh`. The stub tests cover an instance create, a save upload,
+  a host list, an instance list and an export that never answer.
+
 ## 2026-11-25
 
 - **Plugins from npm: `CLUSTERIO_NPM_PLUGINS`.** Set it on the controller and every host to a

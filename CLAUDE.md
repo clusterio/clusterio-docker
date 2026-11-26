@@ -140,12 +140,13 @@ clusterio-docker/
 ### Seeding Flow (`seed-instances.sh`)
 
 ```
-1. Wait for all expected hosts to connect (up to 30 attempts × 2s)
+1. Wait for all expected hosts to connect (polls for up to 75 s)
 2. Scan seed-data/hosts/<hostname>/ directories; resolve each folder to a host id:
    the id its clusterio-host-N.token was issued for, else the only host with that name, else id N
    (clusters set up before Clusterio 2.1); none, or the host list cannot be read → ERROR, skip the folder
 3. For each instance directory:
-   a. Idempotency check: skip if an instance with exactly that name exists (`instance list --output json`)
+   a. Idempotency check: skip if an instance with exactly that name exists (`instance list --output json`);
+      the list cannot be read → ERROR, the instance is not created
    b. Create instance via clusterioctl
    c. Apply instance.json config (if present), skipping runtime-specific fields — while still unassigned
    d. Assign to the resolved host id

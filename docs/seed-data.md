@@ -313,6 +313,17 @@ All other fields (server settings, plugin toggles, factorio version, etc.) are a
   host has no token yet (is `HOST_COUNT` at least N?) or never registered; `ERROR: could not
   list the controller's hosts` means the controller did not answer `host list`
 
+### A seeding command got no answer
+
+- `ERROR: … got no answer within …s; stopped waiting. The controller may still have applied it.`:
+  the controller did not answer an `instance create`, an `instance assign` (60 s) or a save
+  upload (300 s) in time. Seeding is retried on the next controller start, and it skips an
+  instance that already exists: check the instance named in the error (host assignment,
+  saves) first
+- `ERROR: could not list the controller's instances, so cannot tell whether '…' exists. Not
+  creating it.`: the controller did not answer `instance list` (60 s). Nothing was created
+  for that instance; the next controller start tries again
+
 ### Instance created but not started
 
 - `WARNING: instance '…' cannot start: its mod pack lacks mods a loaded plugin requires`,

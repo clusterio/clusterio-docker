@@ -15,7 +15,7 @@ for(let i=0;i<flags.length;i++) {
     options[key.slice(2)]=flags[++i];
   } else throw Error("Unknown option "+key);
 }
-const cases=["lifecycle","shutdown","stale-lock","rotation","overrides","saved-identity","hook-identity","zero-id","host-wipe","scale-out","controller-wipe","failures","upgrade","cluster-upgrade"];
+const cases=["lifecycle","shutdown","stale-lock","rotation","overrides","saved-identity","hook-identity","zero-id","host-wipe","scale-out","controller-wipe","failures","npm-plugins","upgrade","cluster-upgrade"];
 assert.ok(options.case==="all" || cases.includes(options.case), "Unknown acceptance case");
 const expected=options.plugins==="none"?[]:options.plugins.split(",").sort();
 const run="cd-smoke-"+randomUUID().slice(0,12), label="clusterio-docker.smoke";
@@ -95,6 +95,11 @@ async function controllerApi(route,{bearer,body,controller=ctl}={}) {
   return {status:response.status,json:await response.json().catch(()=>null)};
 }
 const accepted=async(jwt,controller)=>(await controllerApi("api/host-pairing/check",{bearer:jwt,controller})).status===200;
+// Waits for a container to stop by itself and returns its exit code.
+async function exitCodeOf(name,description) {
+  await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited",description);
+  return JSON.parse(docker("inspect",name))[0].State.ExitCode;
+}
 const logsOf=name=>{
   const output=spawnSync("docker",["logs",name],{encoding:"utf8",timeout:15000,maxBuffer:8388608});
   return String(output.stdout)+String(output.stderr);
@@ -329,9 +334,47 @@ try {
     create(name,report.images.host,["-e","CLUSTERIO_HOST_TOKEN="+unsignedToken(7),"-e","HOST_NAME=clusterio-host-1"]);
     const bad=join(directory,"fail.sh");writeFileSync(bad,"exit 17\n");
     docker("cp",bad,name+":/etc/clusterio/pre-start.d/10-fail.sh");docker("start",name);
-    await until(()=>JSON.parse(docker("inspect",name))[0].State.Status==="exited","failing hook");
-    assert.equal(JSON.parse(docker("inspect",name))[0].State.ExitCode,17);
+    assert.equal(await exitCodeOf(name,"failing hook"),17);
+    // A controller that stops before it answers HTTP takes its container with it. The hook
+    // leaves it a config it cannot read; a plugin that throws while loading ends the same way.
+    const dead=run+"-dead-controller", corrupt=join(directory,"corrupt.sh");
+    create(dead,report.images.controller,["-e","INIT_CLUSTERIO_ADMIN=smoke"]);
+    writeFileSync(corrupt,'printf "{" > "$CLUSTERIO_CONFIG_PATH"\n');
+    docker("cp",corrupt,dead+":/etc/clusterio/pre-start.d/10-corrupt.sh");docker("start",dead);
+    assert.notEqual(await exitCodeOf(dead,"controller that cannot start"),0);
+    assert.match(logsOf(dead),/ERROR: the controller stopped before it answered HTTP/);
+    remove(dead);
   });
+  // CLUSTERIO_NPM_PLUGINS, against the real registry. Release images only: a custom build refuses it.
+  if(report.hostBuildInfo.clusterioTarget==="release") await scenario("npm-plugins",async()=>{
+    // Small, and none of its dependencies is a plugin, so nothing it pulls in is read by the peer-range check.
+    const spec="timeshade@0.1.1";
+    await restartHost({CLUSTERIO_NPM_PLUGINS:spec});
+    assert.ok(logsOf(host).includes("Installed "+spec));
+    assert.match(local(host,"host","plugin","list"),/ - timeshade$/m);
+    // Installed and listed does not mean it loads: @hornwitser/server_select@2.0.1 is both, and its
+    // entrypoints do not resolve on Clusterio 2.x. Import the one this host's instances load, by
+    // path, as Clusterio's plugin loader does.
+    docker("exec","--user","clusterio","-w","/clusterio",host,"node","--input-type=module","-e",
+      'const {plugin}=await import("timeshade");await import("/clusterio/node_modules/timeshade/"+plugin.instanceEntrypoint)');
+    // Installing a plugin leaves every core package where the image put it.
+    const core=docker("exec",host,"sh","-c","cat /clusterio/node_modules/@clusterio/*/package.json | grep '\"version\"' | sort -u");
+    assert.equal(core,'"version": "'+report.hostBuildInfo.clusterioVersion+'",');
+    // A restart reuses the install; only a recreated container goes back to the registry.
+    docker("restart","-t","60",host);await hostReady(host);
+    assert.ok(logsOf(host).includes("npm plugins already installed: "+spec));
+    // A refused value stops the container before the host goes on. Which values are refused is unit-tested.
+    const name=run+"-bad-plugin";
+    create(name,report.images.host,["-e","CLUSTERIO_NPM_PLUGINS=../plugin","-e","HOST_NAME=clusterio-host-1"]);docker("start",name);
+    assert.equal(await exitCodeOf(name,"refused plugin"),1);
+    assert.ok(logsOf(name).includes("ERROR: CLUSTERIO_NPM_PLUGINS: Invalid plugin"));
+    assert.ok(!logsOf(name).includes("Waiting for"),"the host went on after a refused plugin");
+    remove(name);
+    await restartHost();
+  }); else if(options.case==="all" || options.case==="npm-plugins") {
+    report.cases.push({name:"npm-plugins",status:"unverified",reason:"Needs release-target images"});
+    if(options.case==="npm-plugins")throw Error("--case npm-plugins requires release-target images");
+  }
   if(options["previous-host"]) await scenario("upgrade",async()=>{
     remove(host);
     const previous=docker("image","inspect",options["previous-host"],"--format","{{.Id}}");

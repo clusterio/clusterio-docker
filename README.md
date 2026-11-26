@@ -250,6 +250,7 @@ docker run -d -p 34100-34199:34100-34199/udp \
 | `FACTORIO_TOKEN` | *(unset)* | Factorio account token from [factorio.com/profile](https://factorio.com/profile) |
 | `EXPORT_HOST` | `1` (compose) / `0` (skip) | Number N of the host `clusterio-host-N` (not its host id) whose instance runs `export-data` (web-UI icons/prototypes) during first-run seeding — that host needs the game client for icons (a headless host exports no icons). See [Asset Export](docs/asset-export.md). |
 | `CONTROLLER_STATIC_CACHE_MODE` | `revalidate` | `/static` cache headers: `revalidate` (default — non-hashed web-UI assets stay fresh across upgrades) or `immutable` (stock Clusterio behavior) |
+| `CLUSTERIO_NPM_PLUGINS` | *(unset)* | Plugins to install from npm at container start: package names, optionally `@version`, comma or space separated. See [Plugins from npm](#plugins-from-npm) |
 | `CLUSTERIO_LOG_TO_STDOUT` | `true` | Mirror the on-disk cluster/host logs (plugin logger output) to container stdout with a `[cluster-log]` prefix |
 | `CLUSTERIO_LOG_RETENTION_DAYS` | *(unset: Clusterio's `30`)* | Delete controller log files older than this many days. Written to `controller.log_retention_days` before start on every boot when set. Whole number; `0` keeps logs forever; an invalid value stops the container |
 
@@ -261,6 +262,7 @@ docker run -d -p 34100-34199:34100-34199/udp \
 | `CONTROLLER_URL` | `http://clusterio-controller:8080/` on fresh hosts | Explicit override; omission preserves a saved endpoint |
 | `HOST_NAME` | Container hostname | Host name; `clusterio-host-N` reads the token file `clusterio-host-N.token`, and N picks the default port range |
 | `CLUSTERIO_LOG_RETENTION_DAYS` | *(unset: Clusterio's `30`)* | As on the controller, written to `host.log_retention_days` |
+| `CLUSTERIO_NPM_PLUGINS` | *(unset)* | As on the controller; set the same list on every host |
 | `FACTORIO_USERNAME` | *(unset)* | Factorio.com username — triggers runtime game client download on first startup |
 | `FACTORIO_TOKEN` | *(unset)* | Factorio.com token from [factorio.com/profile](https://factorio.com/profile) |
 | `FACTORIO_CLIENT_BUILD` | `expansion` | Runtime client variant: `expansion` (Space Age) or `alpha` (base game) |
@@ -562,7 +564,56 @@ Both images include these official plugins:
 
 ## External Plugins
 
-To use external Clusterio plugins, mount a plugins directory into the containers:
+The six official plugins are in the images already (see [Included Plugins](#included-plugins)).
+Any other plugin is added one of two ways:
+
+| The plugin is | Use |
+|---|---|
+| published on npm | [`CLUSTERIO_NPM_PLUGINS`](#plugins-from-npm) |
+| a folder on disk (your own plugin, or a fork) | [the `external_plugins` mount](#plugins-from-a-folder) |
+
+### Plugins from npm
+
+Name the packages in `CLUSTERIO_NPM_PLUGINS` on the controller and on every host. With the
+default `docker-compose.yml`, one line in `.env` reaches all of them:
+
+```
+CLUSTERIO_NPM_PLUGINS=<plugin>@<version>,<other-plugin>@<version>
+```
+
+- Each entry is an npm package name, optionally with `@version`, separated by commas or
+  spaces. Pin the version, so the controller and the hosts install the same one.
+- The plugins and their dependencies are installed when the container starts, before
+  Clusterio does. The install lives in the container: a `restart` reuses it without npm,
+  and a recreated container (`docker compose up -d` after a change, a new image) installs
+  again and has to reach the npm registry.
+- The container exits with `ERROR: CLUSTERIO_NPM_PLUGINS: …` when a package cannot be
+  installed, is not a Clusterio 2.x plugin (no `clusterio-plugin` keyword), or was built for
+  another Clusterio version than the image's (its `@clusterio/*` peer ranges are checked).
+  Clusterio is not started without a plugin it was told to run; a restart policy then
+  retries the install.
+- These checks do not prove that a plugin loads. A controller that stops while starting,
+  for example because a plugin throws, exits its container; `docker logs` shows the cause.
+- Do not mount folders or a volume inside `/clusterio/node_modules`: the install needs to
+  write there, and a volume would keep the previous image's packages after an image upgrade.
+- Release images only; a `custom` (source) build refuses the variable.
+- Name only packages you trust: a plugin is code that runs inside the controller and the
+  hosts, and installing it runs its npm install scripts.
+- Plugins installed with Clusterio's own `plugin install` command live in the container the
+  same way and are gone when it is recreated. Name them here to keep them.
+
+To bake plugins into your own images instead, so a start needs no network:
+
+```dockerfile
+FROM ghcr.io/clusterio/clusterio-docker-controller:<tag>
+RUN gosu clusterio node /scripts/install-npm-plugins.cjs "<plugin>@<version> <other-plugin>@<version>"
+```
+
+and the same two lines on `clusterio-docker-host`.
+
+### Plugins from a folder
+
+Mount a plugins directory into the containers:
 
 1. Uncomment the external plugins volume in `docker-compose.yml` for the controller and each host
 2. Place plugin directories (each containing a `package.json`) in the `plugins/` folder

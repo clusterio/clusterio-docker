@@ -122,7 +122,14 @@ Export-data generates item icons, recipe data, and spritesheets for the web UI.
 
 ## External Plugins
 
-Mount your plugin directory into **both** controller and host containers at `/clusterio/external_plugins`. The mount **must be read-write** — the entrypoint runs `npm install` inside each plugin.
+A plugin published on npm needs no mount: name it in `CLUSTERIO_NPM_PLUGINS` on the controller
+and every host (`<plugin>@<version>,<other-plugin>@<version>`). It is installed at container
+start with its dependencies; a container that cannot install it, or whose `@clusterio/*`
+packages the install would move, exits 1. A recreated container installs again and needs the
+npm registry; bake the plugin into a derived image to avoid that (README,
+[Plugins from npm](../README.md#plugins-from-npm)).
+
+For a plugin that is a folder on disk, mount your plugin directory into **both** controller and host containers at `/clusterio/external_plugins`. The mount **must be read-write** — the entrypoint runs `npm install` inside each plugin.
 
 ```
 plugins/
@@ -214,9 +221,23 @@ The development Compose overlay forwards the same variable. This applies only to
 build input, not a runtime environment switch. Published defaults remain unchanged.
 
 Clusterio discovers installed plugin packages automatically. A smaller plugin-list
-does not disable installed bundled plugins. Install your packaged plugins with
-normal npm in a derived image (they must be Clusterio 2.1 plugins — see External Plugins above)
-and verify the discovered set before starting saves.
+does not disable installed bundled plugins. Plugins from npm go in `CLUSTERIO_NPM_PLUGINS`
+or, baked into a derived image, through `/scripts/install-npm-plugins.cjs` (README,
+[Plugins from npm](../README.md#plugins-from-npm)); a packaged tarball of your own installs
+with normal npm in a derived image. They must be Clusterio 2.1 plugins (see External Plugins
+above); verify the discovered set before starting saves.
+
+The images record exact `@clusterio/*` versions in `/clusterio/package.json`, as
+dependencies and as npm `overrides`, so no `npm install` there can move a core package or
+bring one in at another version, whatever a plugin's peer ranges say. The other side of that:
+npm itself no longer refuses a plugin built for another Clusterio version. The
+`CLUSTERIO_NPM_PLUGINS` installer checks the peer ranges and refuses; a bare `npm install` or
+Clusterio's own `plugin install` does not.
+
+The same pins mean Clusterio's remote update (`controller update`, `host update`, the web
+interface's update button) does not change `@clusterio/*` packages: the `npm update --save`
+behind it succeeds and leaves them at the image's version, and a bundled plugin update pinned
+to a version fails with `EOVERRIDE`. Upgrade Clusterio by changing the image tag.
 
 ## Host configuration precedence
 

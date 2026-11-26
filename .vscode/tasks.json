@@ -14,7 +14,7 @@
         {
             "label": "Docker -v Down/Built/Up",
             "type": "shell",
-            "command": "docker compose down -v && docker compose build && docker compose up -d",
+            "command": "docker compose down -v && docker compose -f docker-compose.yml -f docker-compose.dev.yml build && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d",
             "problemMatcher": [],
             "presentation": {
                 "reveal": "always",

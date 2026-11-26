@@ -323,7 +323,7 @@ When using `CLUSTERIO_TARGET: custom` with a local fork, use the hot-deploy scri
 ./tools/deploy-cluster.ps1 -NoBuild                # Deploy previously compiled artifacts
 ./tools/deploy-cluster.ps1 -NoBuild -NoRestart     # Deploy without restarting
 ```
-The script compiles TypeScript locally via `pnpm install`, then copies `dist/` directories into containers via `docker cp`. Dependency changes (package.json) still require an image rebuild. The script's preflight check looks for `CLUSTERIO_TARGET: custom` in `docker-compose.yml` and exits 1 when it is absent.
+The script compiles TypeScript locally via `pnpm install`, then copies `dist/` directories into containers via `docker cp`. Dependency changes (package.json) still require an image rebuild. Before copying anything, the script reads `clusterioTarget` from each target container's `/clusterio/BUILD_INFO` and exits 1 unless it is `custom`. It needs PowerShell 7 (`pwsh`); Windows PowerShell 5.1 cannot parse the file.
 
 ## CI Pipeline
 

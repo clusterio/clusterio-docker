@@ -6,14 +6,20 @@
     Builds the Clusterio TypeScript source locally and copies the compiled
     output into running Docker containers without rebuilding images.
 
-    Much faster than `docker compose build` for iterative development (~6s
-    per container vs minutes for a full image rebuild).
+    For iterative development on custom-target images: it avoids an image
+    rebuild for a source change.
 
     Deploys compiled dist/ directories only. If you change dependencies
-    (package.json), you still need `docker compose build` to update
-    node_modules inside the image.
+    (package.json), you still need to rebuild the images
+    (docker compose -f docker-compose.yml -f docker-compose.dev.yml build)
+    to update node_modules inside them.
 
-    Requires: pnpm, Docker
+    The target containers must run custom-target images: the script reads
+    clusterioTarget from each container's /clusterio/BUILD_INFO and stops
+    before copying anything when it is not "custom".
+
+    Requires: PowerShell 7 (pwsh), pnpm, Docker. Windows PowerShell 5.1 cannot
+    parse this file.
 
 .PARAMETER Target
     Which containers to deploy to: all (default), controller, or hosts.
@@ -105,18 +111,7 @@ Write-Host ""
 
 # ─── Preflight Checks ────────────────────────────────────────────────
 
-# 1. Verify CLUSTERIO_TARGET=custom in docker-compose.yml
-if (Test-Path $ComposeFile) {
-    $composeContent = Get-Content $ComposeFile -Raw
-    if ($composeContent -notmatch 'CLUSTERIO_TARGET:\s*(custom|\$\{CLUSTERIO_TARGET:-custom\})') {
-        Write-Fail "CLUSTERIO_TARGET is not set to 'custom' in docker-compose.yml"
-        Write-Detail "This script only works with a custom Clusterio build (local fork)."
-        Write-Detail "Set CLUSTERIO_TARGET: custom in docker-compose.yml first."
-        exit 1
-    }
-}
-
-# 2. Source directory
+# 1. Source directory
 if (-not (Test-Path (Join-Path $SourceDir "package.json"))) {
     Write-Fail "Clusterio source not found at: $SourceDir"
     Write-Detail "Clone your fork:  git clone <url> clusterio/"
@@ -161,6 +156,26 @@ if (-not $BuildOnly) {
     }
 
     Write-Ok "Containers: $($containers -join ', ')"
+
+    # 4. The containers must run custom-target images. The dist/ paths copied below
+    #    (/clusterio/packages/...) exist only in the custom image's monorepo layout; in a
+    #    release image the copy would create directories nothing loads. The compose files
+    #    do not say which target a running image was built from; its BUILD_INFO does.
+    foreach ($c in $containers) {
+        $buildTarget = $null
+        $buildInfo = docker exec $c cat /clusterio/BUILD_INFO 2>$null
+        if ($LASTEXITCODE -eq 0 -and $buildInfo) {
+            try { $buildTarget = (($buildInfo -join "`n") | ConvertFrom-Json).clusterioTarget } catch { }
+        }
+        if ($buildTarget -ne 'custom') {
+            $found = if ($buildTarget) { "'$buildTarget'" } else { "unreadable" }
+            Write-Fail "$c does not run a custom-target image (BUILD_INFO clusterioTarget is $found)."
+            Write-Detail "This script only works with images built from local Clusterio source."
+            Write-Detail "Set CLUSTERIO_TARGET=custom in .env, then build and start with the overlay:"
+            Write-Detail "  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build"
+            exit 1
+        }
+    }
 }
 
 # ─── Step 1: Build ───────────────────────────────────────────────────
@@ -170,7 +185,7 @@ if (-not $NoBuild) {
 
     Push-Location $SourceDir
     try {
-        # pnpm install triggers prepare scripts (TypeScript compile + webpack bundle)
+        # pnpm install triggers prepare scripts (TypeScript compile + web bundle)
         $buildOutput = pnpm install 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Fail "pnpm install failed:"
@@ -316,7 +331,9 @@ if (-not $NoRestart) {
     while (-not $instancesDone -and $instSw.Elapsed.TotalSeconds -lt $instTimeout) {
         Start-Sleep -Seconds 3
 
-        $listOut = docker exec $ctrlName sh -c 'npx clusterioctl --config /clusterio/tokens/config-control.json --log-level error instance list 2>/dev/null' 2>$null
+        # Bounded inside the container: clusterioctl has no client-side timeout, and a
+        # call that never returns would keep this loop from reaching its own deadline.
+        $listOut = docker exec $ctrlName sh -c 'timeout -k 5 25 npx clusterioctl --config /clusterio/tokens/config-control.json --log-level error instance list 2>/dev/null' 2>$null
         if ($LASTEXITCODE -ne 0 -or -not $listOut) { continue }
 
         $stateMap = @{}

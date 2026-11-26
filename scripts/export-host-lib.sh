@@ -28,7 +28,7 @@ HEADLESS_FACTORIO_DIR="/opt/factorio"
 # under pipefail that turns a good answer into a failed lookup.
 host_factorio_dir() {
   local config dir
-  config=$(timeout 25 gosu clusterio npx clusterioctl --log-level error host config list "$1" \
+  config=$(timeout -k 5 25 gosu clusterio npx clusterioctl --log-level error host config list "$1" \
     --output json --config "$2" 2>/dev/null) || return 1
   dir=$(node "$SCRIPT_LIB_DIR/ctl-json.cjs" field host.factorio_directory <<<"$config" 2>/dev/null) || return 1
   [ -n "$dir" ] || return 1

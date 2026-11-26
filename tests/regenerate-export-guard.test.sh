@@ -48,6 +48,7 @@ SH
 #   STUB_ASSIGNED_HOST   assignedHost of TestInstance (empty = unassigned)
 #   STUB_FACTORIO_DIR    host.factorio_directory the host reports
 #   STUB_HOST_CONFIG_RC  exit status of `host config list` (non-zero = host unreachable)
+#   STUB_HANG            when set, a call whose arguments contain it never answers
 cat > "$WORK/bin/npx" <<'SH'
 #!/bin/bash
 if [ "${1:-}" != "clusterioctl" ]; then
@@ -55,6 +56,11 @@ if [ "${1:-}" != "clusterioctl" ]; then
 fi
 shift
 printf '%s\n' "$*" >> "$CALL_LOG"
+
+# A controller that accepts the connection and never answers: only a signal ends this.
+if [ -n "${STUB_HANG:-}" ]; then
+  case "$*" in *"$STUB_HANG"*) while :; do :; done ;; esac
+fi
 
 json=false
 case " $* " in *" --output json "*) json=true ;; esac
@@ -180,7 +186,18 @@ else
   fail "prefix match: /opt/factorio-custom was refused"; dump
 fi
 
-echo "=== Case 6: usage errors ==="
+echo "=== Case 6: an export that never answers is stopped at its limit, not retried ==="
+if run_case 1 STUB_FACTORIO_DIR=/opt/factorio-client STUB_HANG="instance export-data" CTL_TRANSFER_TIMEOUT=2 -- TestInstance \
+   && [ "$(grep -cF "instance export-data TestInstance" "$CALL_LOG")" = "1" ] \
+   && grep -qF "ERROR: export-data did not finish within 2s and was stopped" "$WORK/out" \
+   && ! grep -qF "not ready yet" "$WORK/out" \
+   && [ "$(tail -n 1 "$CALL_LOG" | grep -cF "instance start TestInstance")" = "1" ]; then
+  pass "hung export: one attempt, reported as stopped, instance started again, exit 1"
+else
+  fail "a hung export was retried or not reported"; dump
+fi
+
+echo "=== Case 7: usage errors ==="
 if run_case 2 -- && ! mutated; then pass "no instance name: exit 2"; else fail "missing instance name not rejected"; fi
 if run_case 2 -- TestInstance --force && ! mutated; then pass "unknown option: exit 2"; else fail "unknown option not rejected"; fi
 

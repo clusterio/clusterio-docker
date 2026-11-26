@@ -43,14 +43,26 @@ CONTROL_CONFIG="${CONTROL_CONFIG:-/clusterio/tokens/config-control.json}"
 # shellcheck source=scripts/export-host-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/export-host-lib.sh"
 
+# Every call is time-bounded: clusterioctl has no client-side timeout and waits forever
+# on a controller that does not answer. Seconds; see seed-instances.sh for the three limits.
+CTL_LOOKUP_TIMEOUT="${CTL_LOOKUP_TIMEOUT:-25}"
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-1800}"
+
+# ctl <seconds> <clusterioctl arguments...>
 ctl() {
-  gosu clusterio npx clusterioctl --log-level error "$@" --config "$CONTROL_CONFIG"
+  local limit="$1"; shift
+  timeout -k 5 "$limit" gosu clusterio npx clusterioctl --log-level error "$@" --config "$CONTROL_CONFIG"
 }
 
-# Lookups are time-bounded: clusterioctl has no client-side timeout and hangs on
-# an unreachable controller.
 lookup() {
-  timeout 25 gosu clusterio npx clusterioctl --log-level error "$@" --config "$CONTROL_CONFIG" 2>/dev/null
+  ctl "$CTL_LOOKUP_TIMEOUT" "$@" 2>/dev/null
+}
+
+restart_and_fail() {
+  echo "Restarting '$INSTANCE' anyway..."
+  ctl "$CTL_ACTION_TIMEOUT" instance start "$INSTANCE" >/dev/null 2>&1 || true
+  exit 1
 }
 
 # Prints host.factorio_directory of the host the instance is assigned to.
@@ -90,18 +102,28 @@ else
 fi
 
 echo "Stopping '$INSTANCE' for export-data..."
-ctl instance stop "$INSTANCE" >/dev/null 2>&1 || true
+ctl "$CTL_ACTION_TIMEOUT" instance stop "$INSTANCE" >/dev/null 2>&1 || true
 sleep 5
 
 echo "Running export-data on '$INSTANCE'..."
 tries=0
-until ctl instance export-data "$INSTANCE" >/dev/null; do
+while :; do
+  export_rc=0
+  ctl "$CTL_TRANSFER_TIMEOUT" instance export-data "$INSTANCE" >/dev/null || export_rc=$?
+  if [ "$export_rc" -eq 0 ]; then
+    break
+  fi
+  # timeout's own statuses: stopped at the limit (124), or killed after ignoring that (137).
+  # An export that ran into the limit is not "not ready yet": trying again would only wait
+  # that long again.
+  if [ "$export_rc" -eq 124 ] || [ "$export_rc" -eq 137 ]; then
+    echo "ERROR: export-data did not finish within ${CTL_TRANSFER_TIMEOUT}s and was stopped — check the log of the instance's host (docs/asset-export.md)" >&2
+    restart_and_fail
+  fi
   tries=$((tries + 1))
   if [ "$tries" -ge 6 ]; then
     echo "ERROR: export-data failed after $tries attempts — check the log of the instance's host (docs/asset-export.md)" >&2
-    echo "Restarting '$INSTANCE' anyway..."
-    ctl instance start "$INSTANCE" >/dev/null 2>&1 || true
-    exit 1
+    restart_and_fail
   fi
   echo "  not ready yet, retrying in 10s... ($tries/6)"
   sleep 10
@@ -109,5 +131,5 @@ done
 echo "Export complete."
 
 echo "Restarting '$INSTANCE'..."
-ctl instance start "$INSTANCE" >/dev/null 2>&1 || true
+ctl "$CTL_ACTION_TIMEOUT" instance start "$INSTANCE" >/dev/null 2>&1 || true
 echo "Done — the web UI serves the refreshed assets."

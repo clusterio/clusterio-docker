@@ -11,6 +11,29 @@ traces back to its notice.
 Format: `## YYYY-MM-DD` heading, short bullets. Say what changed for someone running the
 images and what they must do. State the Clusterio / Factorio versions when they change.
 
+## 2026-11-26
+
+- **Seeding and export commands no longer wait forever on a controller that does not
+  answer.** Controller image only. Every `clusterioctl` call its scripts make to the
+  controller now runs under a time limit: 25 s for queries, 120 s for changes (instance
+  create, assign and config set, mod pack edits), 30 minutes for save uploads, mod uploads
+  and `export-data`. Before, only some lookups and the start loop were bounded. Nothing to do
+  for a cluster whose seeding works.
+  - A seeding command stopped at its limit logs `ERROR: … did not finish within …s and was
+    stopped. The controller may still have applied it.` and counts as a seeding failure:
+    `.seed-complete` is not written and the next start retries. Seeding skips an instance
+    that already exists, so check the instance named in such an error (host assignment,
+    saves) before relying on the retry.
+  - `regenerate-export-data.sh` stops an export that does not finish in 30 minutes, starts
+    the instance again and exits 1, without its usual retries.
+  - The wait for `HOST_COUNT` hosts at the start of seeding ends 60 s after it began; before,
+    it ended after 30 polls, however long each took.
+  - Setting the default mod pack still stops the controller container when it fails, and now
+    also when it runs into its limit.
+- **Tests.** `tests/ctl-timeout.test.cjs` fails on a scripted `clusterioctl` call to a
+  controller without `timeout`. The stub tests cover an instance create, a save upload, a
+  host list and an export that never answer.
+
 ## 2026-11-22
 
 - **Clusterio `2.1.2`** (from `2.1.1`). First pin: `2.1.2.r1`. Node `24.22.3`, the Factorio

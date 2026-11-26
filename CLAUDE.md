@@ -138,7 +138,7 @@ clusterio-docker/
 ### Seeding Flow (`seed-instances.sh`)
 
 ```
-1. Wait for all expected hosts to connect (up to 30 attempts × 2s)
+1. Wait for all expected hosts to connect (up to 60 s)
 2. Scan seed-data/hosts/<hostname>/ directories; resolve each folder to a host id:
    the id its clusterio-host-N.token was issued for, else the only host with that name, else id N
    (clusters set up before Clusterio 2.1); none, or the host list cannot be read → ERROR, skip the folder

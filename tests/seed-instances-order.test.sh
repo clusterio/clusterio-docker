@@ -93,6 +93,7 @@ SH
 #   STUB_HOSTS       `host list` answer (JSON array)
 #   STUB_HOSTS_FAIL  when set, `host list` fails the way clusterioctl does in JSON mode
 #   STUB_START_ERR   when set, `instance start` prints it on stderr and exits 1
+#   STUB_HANG        when set, a call whose arguments contain it never answers
 cat > "$WORK/bin/npx" <<'SH'
 #!/bin/bash
 if [ "${1:-}" != "clusterioctl" ]; then
@@ -104,6 +105,10 @@ printf '%s\n' "$*" >> "$CALL_LOG"
 json=false
 case " $* " in *" --output json "*) json=true ;; esac
 args="$*"
+# A controller that accepts the connection and never answers: only a signal ends this.
+if [ -n "${STUB_HANG:-}" ]; then
+  case "$args" in *"$STUB_HANG"*) while :; do :; done ;; esac
+fi
 case "$args" in
   *"instance list"*|*"host list"*|*"host config list"*)
     if [ "$json" != "true" ]; then
@@ -425,6 +430,45 @@ if [ "$run_rc" -ne 0 ] && grep -qF "ERROR: could not list the controller's hosts
   pass "a failed host list is reported as such: non-zero exit, no instance created"
 else
   fail "a failed host list was not reported correctly (exit $run_rc)"; dump_run "$D"
+fi
+
+echo "=== Case 10: a change the controller never answers is stopped at its time limit ==="
+D="$WORK/case-hang"
+fixture "$D" HungInstance
+hang_started=$SECONDS
+run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_HANG="instance create" CTL_ACTION_TIMEOUT=2
+if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
+   && grep -qF "ERROR: instance create 'HungInstance' did not finish within 2s and was stopped" "$D/run.out" \
+   && ! grep -qF "instance assign" "$D/calls.log"; then
+  pass "a hung instance create ends at the limit, is reported as stopped, and nothing follows it"
+else
+  fail "a hung instance create was not stopped and reported (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
+fi
+
+echo "=== Case 11: a save upload the controller never answers uses the transfer limit ==="
+D="$WORK/case-hang-upload"
+fixture "$D" HungUpload
+hang_started=$SECONDS
+run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_HANG="instance save upload" CTL_TRANSFER_TIMEOUT=2
+if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
+   && grep -qF "ERROR: save upload 'world.zip' -> 'HungUpload' did not finish within 2s and was stopped" "$D/run.out" \
+   && ! grep -qF "instance start HungUpload" "$D/calls.log"; then
+  pass "a hung save upload ends at the transfer limit and the instance is not started"
+else
+  fail "a hung save upload was not stopped and reported (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
+fi
+
+echo "=== Case 12: a host list the controller never answers does not hold up the wait for hosts ==="
+D="$WORK/case-hang-hosts"
+fixture "$D" WaitedInstance
+hang_started=$SECONDS
+run_seed "$D" 1 STUB_HANG="host list" CTL_LOOKUP_TIMEOUT=1 HOST_WAIT_SECONDS=3
+if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
+   && grep -qF "WARNING: Only 0 of 1 host(s) connected after waiting" "$D/run.out" \
+   && grep -qF "ERROR: could not list the controller's hosts" "$D/run.out"; then
+  pass "the wait for hosts ends at its deadline and the unanswered host list is reported"
+else
+  fail "a hung host list was not handled (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
 fi
 
 echo

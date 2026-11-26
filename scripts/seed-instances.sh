@@ -29,6 +29,18 @@ SEED_DATA_DIR="${SEED_DATA_DIR:-/clusterio/seed-data}"
 TOKENS_DIR="${TOKENS_DIR:-/clusterio/tokens}"
 # How long an auto-started instance gets to reach "running". Overridable for the same test.
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-120}"
+# How long seeding waits for HOST_COUNT hosts to connect before it carries on.
+HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-60}"
+# Time limits, in seconds, for clusterioctl calls. clusterioctl has no client-side timeout
+# and waits forever on a controller that does not answer, so every call that contacts the
+# controller runs under `timeout` (pinned by tests/ctl-timeout.test.cjs). Overridable for
+# the ordering test.
+#   lookup    read-only queries, and the start attempt the start loop repeats
+#   action    changes the controller answers once it has applied them
+#   transfer  save uploads and export-data
+CTL_LOOKUP_TIMEOUT="${CTL_LOOKUP_TIMEOUT:-25}"
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-1800}"
 
 # Count of operations that failed. Seeding continues past a failure (one bad
 # instance must not strand the others) but the script exits non-zero so the
@@ -44,14 +56,22 @@ SEED_FAILURES=0
 # too — so the only symptom was the 120s start-loop timeout, by which point the
 # real error was unrecoverable.
 # ---------------------------------------------------------------------------
-ctl_seed() {
-  local what="$1"; shift
+ctl_seed() { ctl_seed_within "$CTL_ACTION_TIMEOUT" "$@"; }
+
+# ctl_seed_within <seconds> <what> <clusterioctl arguments...>
+ctl_seed_within() {
+  local limit="$1" what="$2"; shift 2
   local err rc=0
   # 2>&1 >/dev/null keeps stderr and drops stdout: the table output is noise
   # here, the error text is the whole point.
-  err=$(gosu clusterio npx clusterioctl --log-level error "$@" \
+  err=$(timeout -k 5 "$limit" gosu clusterio npx clusterioctl --log-level error "$@" \
     --config "$CONTROL_CONFIG" 2>&1 >/dev/null) || rc=$?
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    # timeout's own statuses: stopped at the limit (124), or killed after ignoring that (137).
+    # The command was cut off, not refused: the controller may have carried it out.
+    echo "      ERROR: $what did not finish within ${limit}s and was stopped. The controller may still have applied it." >&2
+    SEED_FAILURES=$((SEED_FAILURES + 1))
+  elif [ "$rc" -ne 0 ]; then
     echo "      ERROR: $what failed (exit $rc)" >&2
     if [ -n "$err" ]; then
       printf '        %s\n' "$err" >&2
@@ -84,23 +104,28 @@ fi
 # ---------------------------------------------------------------------------
 wait_for_hosts() {
   local expected="$1"
-  local max_attempts=30
+  local connected=0
 
   if [ "$expected" -le 0 ]; then
     return 0
   fi
 
   echo "Waiting for $expected host(s) to connect..."
-  for i in $(seq 1 "$max_attempts"); do
-    local connected
+  # A wall-clock deadline (SECONDS is bash's elapsed timer), not a count of polls: one
+  # poll can itself take up to the lookup limit.
+  local deadline=$((SECONDS + HOST_WAIT_SECONDS))
+  while :; do
     # ctl-json.cjs reads all of its input, so the pipe cannot break early.
-    connected=$(gosu clusterio npx clusterioctl --log-level error host list --output json \
+    connected=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error host list --output json \
       --config "$CONTROL_CONFIG" 2>/dev/null | node "$SCRIPT_LIB_DIR/ctl-json.cjs" connected-hosts 2>/dev/null || true)
     connected=${connected:-0}
 
     if [ "$connected" -ge "$expected" ]; then
       echo "All hosts connected"
       return 0
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      break
     fi
     sleep 2
   done
@@ -122,7 +147,7 @@ resolve_host_id() {
   if [ -f "$TOKENS_DIR/$name.token" ]; then
     token_id=$(node "$SCRIPT_LIB_DIR/host-token.cjs" id "$TOKENS_DIR/$name.token" 2>/dev/null) || token_id=""
   fi
-  hosts=$(timeout 25 gosu clusterio npx clusterioctl --log-level error host list --output json \
+  hosts=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error host list --output json \
     --config "$CONTROL_CONFIG" 2>/dev/null) || return 2
   node "$SCRIPT_LIB_DIR/ctl-json.cjs" resolve-host "$name" "$token_id" "$number" <<<"$hosts" 2>/dev/null
 }
@@ -184,7 +209,7 @@ apply_instance_config() {
       continue
     fi
 
-    gosu clusterio npx clusterioctl --log-level error instance config set \
+    timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance config set \
       "$instance_name" "$field" "$value" \
       --config "$CONTROL_CONFIG" >/dev/null 2>/dev/null || {
         echo "        Warning: Failed to set $field"
@@ -213,7 +238,7 @@ seed_instance() {
   # Idempotency check: skip if instance with this name already exists. A list that
   # cannot be read counts as "does not exist".
   local instances
-  if instances=$(gosu clusterio npx clusterioctl --log-level error instance list --output json \
+  if instances=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance list --output json \
        --config "$CONTROL_CONFIG" 2>/dev/null) \
      && node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" id <<<"$instances" >/dev/null 2>&1; then
     echo "    Instance '$instance_name' already exists — skipping"
@@ -262,7 +287,7 @@ seed_instance() {
       local save_name
       save_name=$(basename "$save_file")
       echo "      Uploading save: $save_name"
-      ctl_seed "save upload '$save_name' -> '$instance_name'" \
+      ctl_seed_within "$CTL_TRANSFER_TIMEOUT" "save upload '$save_name' -> '$instance_name'" \
         instance save upload "$instance_name" "$save_file" || save_upload_failed=true
     fi
   done
@@ -301,7 +326,7 @@ seed_instance() {
        && [ "$host_number" = "$EXPORT_HOST" ] \
        && [ "${_EXPORT_DONE:-}" != "true" ]; then
       echo "      Exporting game data ($host_label is the designated export host)..."
-      if gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
+      if timeout -k 5 "$CTL_TRANSFER_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
           --config "$CONTROL_CONFIG" >/dev/null 2>/dev/null; then
         echo "      Export-data complete."
         # A host without the game client exports successfully, but exports no icons,
@@ -323,11 +348,11 @@ seed_instance() {
     # fire before the host had created the instance dir and swallowed the
     # failure — an instance silently stayed stopped. Retry until running,
     # WARN loud on giving up, with the last error the start command gave.
-    # ctl calls are timeout-bounded (#24 rule).
+    # Each attempt and each status query is bounded by the lookup limit.
     local _start_deadline=$((SECONDS + START_WAIT_SECONDS)) _started=false _start_err="" _err _list
     local _mods_missing=false
     while [ "$SECONDS" -lt "$_start_deadline" ]; do
-      _err=$(timeout 25 gosu clusterio npx clusterioctl --log-level error instance start "$instance_name" \
+      _err=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance start "$instance_name" \
         --config "$CONTROL_CONFIG" 2>&1 >/dev/null) || true
       if [ -n "$_err" ]; then
         _start_err="$_err"
@@ -339,7 +364,7 @@ seed_instance() {
         break
       fi
       sleep 5
-      if _list=$(timeout 25 gosu clusterio npx clusterioctl --log-level error instance list --output json \
+      if _list=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance list --output json \
             --config "$CONTROL_CONFIG" 2>/dev/null) \
          && [ "$(node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" status <<<"$_list" 2>/dev/null)" = "running" ]; then
         _started=true

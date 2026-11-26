@@ -72,7 +72,7 @@ rebuild). Custom/fork lines (see Branch model) publish under their branch name i
 > **The images bundle no Factorio** (see the licensing note below). The host downloads the mod
 > pack's target *headless* version at runtime. The full client is in an image only when that
 > image was built with `INSTALL_FACTORIO_CLIENT` (such images must stay private); otherwise a
-> host with Factorio credentials downloads it into a volume at start. That is why `BUILD_INFO`
+> host with Factorio credentials downloads it to `/opt/factorio-client` at start. That is why `BUILD_INFO`
 > records `clusterioVersion` and `clusterioTarget` and has no `factorioVersion` field: the
 > Factorio version is a runtime property of the mod pack. A `factorio-*` **branch** tag names a
 > configuration target (entrypoint defaults, seeded mod pack, DLC enable list, the Factorio

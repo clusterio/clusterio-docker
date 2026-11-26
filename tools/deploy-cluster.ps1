@@ -18,7 +18,8 @@
     clusterioTarget from each container's /clusterio/BUILD_INFO and stops
     before copying anything when it is not "custom".
 
-    Requires: pnpm, Docker
+    Requires: PowerShell 7 (pwsh), pnpm, Docker. Windows PowerShell 5.1 cannot
+    parse this file.
 
 .PARAMETER Target
     Which containers to deploy to: all (default), controller, or hosts.
@@ -330,7 +331,9 @@ if (-not $NoRestart) {
     while (-not $instancesDone -and $instSw.Elapsed.TotalSeconds -lt $instTimeout) {
         Start-Sleep -Seconds 3
 
-        $listOut = docker exec $ctrlName sh -c 'npx clusterioctl --config /clusterio/tokens/config-control.json --log-level error instance list 2>/dev/null' 2>$null
+        # Bounded inside the container: clusterioctl has no client-side timeout, and a
+        # call that never returns would keep this loop from reaching its own deadline.
+        $listOut = docker exec $ctrlName sh -c 'timeout -k 5 25 npx clusterioctl --config /clusterio/tokens/config-control.json --log-level error instance list 2>/dev/null' 2>$null
         if ($LASTEXITCODE -ne 0 -or -not $listOut) { continue }
 
         $stateMap = @{}

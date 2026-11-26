@@ -15,11 +15,12 @@ Build the release selection you intend to test, then run one acceptance command:
 docker build -f Dockerfile.controller --build-arg CLUSTERIO_PLUGINS=none -t acceptance-controller .
 docker build -f Dockerfile.host --build-arg CLUSTERIO_PLUGINS=none -t acceptance-host .
 node tests/consumer-smoke.mjs acceptance-controller acceptance-host \
-  --previous-host ghcr.io/clusterio/clusterio-docker-host:2.1.1.r1 \
-  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:2.1.1.r1
+  --previous-host ghcr.io/clusterio/clusterio-docker-host:<previous-pin> \
+  --previous-controller ghcr.io/clusterio/clusterio-docker-controller:<previous-pin>
 ```
 
-The previous images must be available locally (pull them first when needed). CI pins their
+`<previous-pin>` is a published pin of the previous Clusterio version. The previous images
+must be available locally (pull them first when needed). CI pins their
 digests (`PREVIOUS_HOST_IMAGE`, `PREVIOUS_CONTROLLER_IMAGE`).
 Default expected plugins are `none`; pass `--plugins global_chat` for a selected image, or the
 explicit comma-separated six names for a full image. Use `--skip-package` for custom
@@ -32,7 +33,7 @@ Choose a single case with `--case NAME`. Omitting it runs every case.
 
 Hosts the cases restart are stopped before they are replaced, and count as ready only when
 they are healthy **and** their own log contains `Started host`: the controller keeps a killed
-container's session as connected for up to 60 s, which would otherwise satisfy readiness.
+container's session as connected for a while, which would otherwise satisfy readiness.
 Real host tokens reach containers through the docker client's environment, not argv.
 
 | Case | Contract |

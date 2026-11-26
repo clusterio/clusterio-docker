@@ -19,17 +19,17 @@ custom-fork builds, and more. VSCode tasks for the common operations live in
 
 CI (`.github/workflows/docker-build.yml`) builds both images and runs the
 integration suite: database/mod/instance seeding, instance start, and an
-idempotent-restart check. Reproduce locally with `docker compose up -d` (release
-target) or the `Clusterio: …` VSCode tasks.
+idempotent-restart check. The unit tests and the container acceptance runner that CI
+also runs are described in [tests/README.md](tests/README.md). The `Clusterio: …` VSCode
+tasks run the Clusterio source's own lint and tests in a `./clusterio` checkout.
 
 Please make sure CI is green before requesting a merge.
 
 ## Branches & CI targets
 
-**The default branch is `main`, the active line** — built from the `release` (npm) target — see
-README → "Branch model". Base PRs on `main`. The `custom`/fork target is retained but **dormant**:
-a `factorio-<X.Y>` branch builds `custom` only when a new Factorio version outpaces npm support
-(as `factorio-2.1.8` did before Clusterio alpha.27 added 2.1).
+**The default branch is `main`**, built from the `release` (npm) target — see
+README → "Branch model". Base PRs on `main`. A `factorio-<X.Y>` branch builds the `custom`
+target, for a Factorio version the npm release does not support.
 
 - **Pull requests into `main`**, **`main`**, and **tags** build the `release` target
   (npm-published `@clusterio/*` packages, pinned via `CLUSTERIO_VERSION`).
@@ -50,7 +50,7 @@ the images.
 
 > **Immutable pins are git-tagged `<CLUSTERIO_VERSION>.r<N>`** (e.g. `2.1.2.r1`),
 > **not** `v*`. Only the `<version>.rN` shape triggers a tag build — a `v1.2.0`-style tag
-> (the retired repo-SemVer scheme) matches **no** trigger and **silently does nothing** (no
+> matches **no** trigger and **silently does nothing** (no
 > build, no images, no error). Increment `.rN` for docker-layer changes on the same Clusterio
 > version; it resets to `r1` on each Clusterio bump.
 

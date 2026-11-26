@@ -16,8 +16,8 @@ guide is for writing one.
    The mount must be writable — the entrypoint npm-installs inside each plugin dir.
 2. On container start, `install-plugins.sh` installs each plugin's production deps (its full
    contract — non-fatal stderr WARNINGs, the `@clusterio` strip — is documented in the README).
-   **Registration is separate and automatic**: Clusterio's startup scan (`loadPluginList`)
-   walks `external_plugins/` and registers any directory whose `package.json` has
+   **Registration is separate and automatic**: at startup Clusterio
+   scans `external_plugins/` and registers any directory whose `package.json` has
    **`"clusterio-plugin"` in `keywords`**. That keyword is load-bearing — without it the
    plugin npm-installs cleanly and then **silently never loads**. CI pins this whole
    lifecycle with the `seed-data/external_plugins/ci_fixture` plugin.
@@ -39,8 +39,7 @@ guide is for writing one.
    has the details):
    - **Web modules are built with Vite**: a `vite.config.js` using `clusterioPlugin` from
      `@clusterio/web_ui/vite.mjs`, and `vite build` in place of webpack. A plugin built with
-     webpack still loads its controller, host and instance code, but its web UI is rejected
-     ("Incompatible dist/web/manifest.json, the plugin must be rebuilt with Vite").
+     webpack still loads its controller, host and instance code, but its web UI is rejected.
    - **Mount a web module prebuilt.** `install-plugins.sh` runs `npm install --omit=dev`, and
      the release images do not contain `vite`, so `dist/web` must already be in the plugin directory.
    - `RequestError` is replaced by error classes following HTTP status codes (`ValidationError`,
@@ -62,21 +61,19 @@ guide is for writing one.
 
 ## The two rules that cost the most when unknown
 
-1. **`@clusterio/*` must be peerDependencies, never dependencies.** Clusterio fatally rejects a
-   duplicate `@clusterio/lib` — one vendored copy crashes every `clusterioctl` invocation
-   cluster-wide. The entrypoint strips stray copies **on every boot** as a backstop (look for
+1. **`@clusterio/*` must be peerDependencies, never dependencies.** A second copy of
+   `@clusterio/lib` breaks Clusterio. The entrypoint strips stray copies **on every boot** as a backstop (look for
    "Removing local @clusterio packages" in logs), but npm 7+ auto-installs peer deps on a
    workstation `npm install`, so also ship a plugin-level `.npmrc` with
    `legacy-peer-deps=true` and keep your host-side dev types in a directory *above* the plugin
-   (they resolve via Node's upward walk). Two proven workstation patterns from production
-   consumers: **repo-root devDeps** (the `@clusterio` types live in a parent `package.json`
+   (they resolve via Node's upward walk). Two workstation patterns: **repo-root devDeps** (the `@clusterio` types live in a parent `package.json`
    that is never mounted into containers), or **isolated-container builds** (a build script
    that compiles in a throwaway node container, with a named volume shadowing `node_modules`
    so the mounted plugin dir never receives an install). Never run a bare install inside the
    mounted plugin dir.
 2. **Node plugin code is cached by the long-lived host process.** An `instance stop/start`
    re-patches the save-embedded **Lua** module but does **not** reload plugin **Node** code —
-   the require cache keeps serving the old build (and it will even log "plugin initialized").
+   the host process keeps serving the build it loaded.
    After changing Node code: restart the **host container**, then follow the boot-race protocol
    below. (Same class: the controller caches its plugin code too — restart the controller
    container for controller-side changes.)
@@ -112,7 +109,5 @@ silently corrupting the command.
 
 ## Worked example
 
-[`solarcloud7/clustorio-atlas`](https://github.com/solarcloud7/clustorio-atlas) is a full
-production plugin developed against these images — TypeScript instance plugin + save-patched Lua
-module + ctl commands — including a deterministic deploy script (`tools/deploy-plugin.ps1`)
-that encodes the loop above, and an `AGENTS.md` capturing the operational rules.
+[`solarcloud7/clustorio-atlas`](https://github.com/solarcloud7/clustorio-atlas) is a plugin
+project developed against these images.

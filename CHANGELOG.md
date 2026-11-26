@@ -15,12 +15,16 @@ images and what they must do. State the Clusterio / Factorio versions when they 
 
 - **Seeding and export commands no longer wait forever on a controller that does not
   answer.** Controller image only. Every `clusterioctl` call its scripts make to the
-  controller now runs under a time limit: 25 s for queries, 120 s for changes (instance
+  controller now runs under a time limit: 25 s for queries, 60 s for changes (instance
   create, assign and config set, mod pack edits) and for the two lookups that decide whether
-  something is created, 30 minutes for save uploads, mod uploads and `export-data`. Before,
+  something is created, 300 s for save uploads, mod uploads and `export-data`. Before,
   only some lookups and the start loop were bounded. Nothing to do for a cluster whose
   seeding works. The limit ends the waiting `clusterioctl`, not what the controller or host
-  was asked to do. At the limit:
+  was asked to do. Measured on Clusterio 2.1.2 when the limits were chosen: a query or a
+  change answered in about half a second, an instance stop or start in under 2 s, a 300 MiB
+  upload took 4 s, and an export of Space Age from a host with the game client 6 to 7 s.
+  The lines that announce an upload, an export or the wait for hosts now name the limit.
+  At the limit:
   - `instance create`, `instance assign` and a save upload log `ERROR: … got no answer within
     …s; stopped waiting. The controller may still have applied it.` and count as a seeding
     failure: `.seed-complete` is not written and the next start retries. Seeding skips an
@@ -28,8 +32,8 @@ images and what they must do. State the Clusterio / Factorio versions when they 
     assignment, saves) before relying on the retry.
   - `instance config set`, a mod upload, a mod pack edit and seeding's `export-data` log the
     WARNING a failure of that command already logged, and seeding continues.
-  - `regenerate-export-data.sh` does not retry an `export-data` that got no answer in 30
-    minutes: it tries to start the instance and exits 1. The host may still be exporting.
+  - `regenerate-export-data.sh` does not retry an `export-data` that got no answer in 300 s:
+    it tries to start the instance and exits 1. The host may still be exporting.
   - Setting the default mod pack still stops the controller container when it fails, and now
     also at its limit.
 - **Seeding does not create an instance when it cannot read the instance list.** It logs

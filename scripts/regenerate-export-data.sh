@@ -46,8 +46,8 @@ CONTROL_CONFIG="${CONTROL_CONFIG:-/clusterio/tokens/config-control.json}"
 # Every call is time-bounded: clusterioctl has no client-side timeout and waits forever
 # on a controller that does not answer. Seconds; see seed-instances.sh for the three limits.
 CTL_LOOKUP_TIMEOUT="${CTL_LOOKUP_TIMEOUT:-25}"
-CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
-CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-1800}"
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-60}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-300}"
 
 # ctl <seconds> <clusterioctl arguments...>
 ctl() {
@@ -107,7 +107,7 @@ echo "Stopping '$INSTANCE' for export-data..."
 ctl "$CTL_ACTION_TIMEOUT" instance stop "$INSTANCE" >/dev/null 2>&1 || true
 sleep 5
 
-echo "Running export-data on '$INSTANCE'..."
+echo "Running export-data on '$INSTANCE' (waits up to ${CTL_TRANSFER_TIMEOUT}s for an answer)..."
 tries=0
 while :; do
   export_rc=0

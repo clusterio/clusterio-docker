@@ -21,8 +21,8 @@ MOD_PACK_ID="$2"
 SEED_MODS_DIR="/clusterio/seed-data/mods"
 # Time limits, in seconds, for clusterioctl calls: it has no client-side timeout and waits
 # forever on a controller that does not answer (see seed-instances.sh).
-CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
-CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-1800}"
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-60}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-300}"
 
 if [ ! -d "$SEED_MODS_DIR" ]; then
   exit 0

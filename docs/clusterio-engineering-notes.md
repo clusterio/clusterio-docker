@@ -35,8 +35,8 @@ Against an unreachable, or reachable-but-mid-boot, controller, `clusterioctl` **
 indefinitely** rather than failing. A frozen call in a poll loop never reaches the loop's own
 deadline check.
 **Images**: every `clusterioctl` call the image's shell scripts (`scripts/*.sh`) make to a
-controller runs under `timeout`, with one of three limits: 25 s for queries, 120 s for
-changes and for the two queries whose answer decides whether something is created, 1800 s
+controller runs under `timeout`, with one of three limits: 25 s for queries, 60 s for
+changes and for the two queries whose answer decides whether something is created, 300 s
 for uploads and `export-data`. The limit ends the client; what the controller
 or host was asked to do may still complete. **Rule for this repo**: no `clusterioctl` call to
 a controller without a time limit in those scripts; `tests/ctl-timeout.test.cjs` fails on one.

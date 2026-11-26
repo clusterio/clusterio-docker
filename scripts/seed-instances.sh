@@ -41,8 +41,8 @@ HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-75}"
 #             query whose answer decides whether an instance is created
 #   transfer  save uploads and export-data
 CTL_LOOKUP_TIMEOUT="${CTL_LOOKUP_TIMEOUT:-25}"
-CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
-CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-1800}"
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-60}"
+CTL_TRANSFER_TIMEOUT="${CTL_TRANSFER_TIMEOUT:-300}"
 
 # Count of operations that failed. Seeding continues past a failure (one bad
 # instance must not strand the others) but the script exits non-zero so the
@@ -112,7 +112,7 @@ wait_for_hosts() {
     return 0
   fi
 
-  echo "Waiting for $expected host(s) to connect..."
+  echo "Waiting up to ${HOST_WAIT_SECONDS}s for $expected host(s) to connect..."
   # A wall-clock deadline (SECONDS is bash's elapsed timer), not a count of polls: one
   # poll can itself take up to the lookup limit.
   local deadline=$((SECONDS + HOST_WAIT_SECONDS))
@@ -293,7 +293,7 @@ seed_instance() {
     if [ -f "$save_file" ]; then
       local save_name
       save_name=$(basename "$save_file")
-      echo "      Uploading save: $save_name"
+      echo "      Uploading save: $save_name (waits up to ${CTL_TRANSFER_TIMEOUT}s for the controller)"
       ctl_seed_within "$CTL_TRANSFER_TIMEOUT" "save upload '$save_name' -> '$instance_name'" \
         instance save upload "$instance_name" "$save_file" || save_upload_failed=true
     fi
@@ -332,7 +332,7 @@ seed_instance() {
     if [ -n "${EXPORT_HOST:-}" ] && [ "${EXPORT_HOST:-0}" != "0" ] \
        && [ "$host_number" = "$EXPORT_HOST" ] \
        && [ "${_EXPORT_DONE:-}" != "true" ]; then
-      echo "      Exporting game data ($host_label is the designated export host)..."
+      echo "      Exporting game data ($host_label is the designated export host; waits up to ${CTL_TRANSFER_TIMEOUT}s)..."
       if timeout -k 5 "$CTL_TRANSFER_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance export-data "$instance_name" \
           --config "$CONTROL_CONFIG" >/dev/null 2>/dev/null; then
         echo "      Export-data complete."

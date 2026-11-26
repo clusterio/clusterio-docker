@@ -30,13 +30,14 @@ TOKENS_DIR="${TOKENS_DIR:-/clusterio/tokens}"
 # How long an auto-started instance gets to reach "running". Overridable for the same test.
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-120}"
 # How long seeding waits for HOST_COUNT hosts to connect before it carries on.
-HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-60}"
+HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-120}"
 # Time limits, in seconds, for clusterioctl calls. clusterioctl has no client-side timeout
 # and waits forever on a controller that does not answer, so every call that contacts the
 # controller runs under `timeout` (pinned by tests/ctl-timeout.test.cjs). Overridable for
 # the ordering test.
 #   lookup    read-only queries, and the start attempt the start loop repeats
-#   action    changes the controller answers once it has applied them
+#   action    changes the controller answers once it has applied them, and the one
+#             query whose answer decides whether an instance is created
 #   transfer  save uploads and export-data
 CTL_LOOKUP_TIMEOUT="${CTL_LOOKUP_TIMEOUT:-25}"
 CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
@@ -68,8 +69,8 @@ ctl_seed_within() {
     --config "$CONTROL_CONFIG" 2>&1 >/dev/null) || rc=$?
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     # timeout's own statuses: stopped at the limit (124), or killed after ignoring that (137).
-    # The command was cut off, not refused: the controller may have carried it out.
-    echo "      ERROR: $what did not finish within ${limit}s and was stopped. The controller may still have applied it." >&2
+    # Only the client was cut off: the controller may have carried the command out.
+    echo "      ERROR: $what got no answer within ${limit}s; stopped waiting. The controller may still have applied it." >&2
     SEED_FAILURES=$((SEED_FAILURES + 1))
   elif [ "$rc" -ne 0 ]; then
     echo "      ERROR: $what failed (exit $rc)" >&2
@@ -235,12 +236,17 @@ seed_instance() {
   local instance_name
   instance_name=$(basename "$instance_dir")
 
-  # Idempotency check: skip if instance with this name already exists. A list that
-  # cannot be read counts as "does not exist".
+  # Idempotency check: skip if instance with this name already exists. The controller
+  # accepts a second instance of the same name, so without an answer nothing is created:
+  # the failure withholds .seed-complete and the next start asks again.
   local instances
-  if instances=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance list --output json \
-       --config "$CONTROL_CONFIG" 2>/dev/null) \
-     && node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" id <<<"$instances" >/dev/null 2>&1; then
+  if ! instances=$(timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error instance list --output json \
+       --config "$CONTROL_CONFIG" 2>/dev/null); then
+    echo "    ERROR: could not list the controller's instances, so cannot tell whether '$instance_name' exists. Not creating it." >&2
+    SEED_FAILURES=$((SEED_FAILURES + 1))
+    return 1
+  fi
+  if node "$SCRIPT_LIB_DIR/ctl-json.cjs" instance "$instance_name" id <<<"$instances" >/dev/null 2>&1; then
     echo "    Instance '$instance_name' already exists — skipping"
     return 0
   fi

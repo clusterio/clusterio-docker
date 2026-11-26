@@ -78,8 +78,9 @@ does not re-run, so a version bump otherwise ships stale prototypes and icons:
 docker exec clusterio-controller /scripts/regenerate-export-data.sh <instance-name>
 ```
 
-(The script stops the instance, retries `export-data` up to 6×, and restarts it. An export
-that does not finish within 30 minutes is stopped and not retried.)
+(The script stops the instance, retries `export-data` up to 6×, and restarts it. When
+`export-data` gets no answer within 30 minutes, the script stops waiting, does not retry,
+tries to start the instance and exits 1; the host may still be exporting.)
 
 **An export replaces the mod pack's whole export manifest.** A headless export run after a
 client export therefore swaps the good spritesheet for an empty one; the old file stays in

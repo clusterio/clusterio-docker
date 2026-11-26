@@ -59,7 +59,7 @@ printf '%s\n' "$*" >> "$CALL_LOG"
 
 # A controller that accepts the connection and never answers: only a signal ends this.
 if [ -n "${STUB_HANG:-}" ]; then
-  case "$*" in *"$STUB_HANG"*) while :; do :; done ;; esac
+  case "$*" in *"$STUB_HANG"*) exec tail -f /dev/null ;; esac
 fi
 
 json=false
@@ -104,7 +104,9 @@ run_case() {
   shift
   : > "$CALL_LOG"
   set +e
-  env PATH="$WORK/bin:$PATH" CALL_LOG="$CALL_LOG" CONTROL_CONFIG="$WORK/config-control.json" \
+  # The outer limit turns a script that waits forever (a call that lost its own limit)
+  # into a failed case instead of a test that never returns.
+  timeout -k 5 300 env PATH="$WORK/bin:$PATH" CALL_LOG="$CALL_LOG" CONTROL_CONFIG="$WORK/config-control.json" \
     ${envs[@]+"${envs[@]}"} bash "$SCRIPT" "$@" > "$WORK/out" 2>&1
   local rc=$?
   set -e
@@ -189,10 +191,10 @@ fi
 echo "=== Case 6: an export that never answers is stopped at its limit, not retried ==="
 if run_case 1 STUB_FACTORIO_DIR=/opt/factorio-client STUB_HANG="instance export-data" CTL_TRANSFER_TIMEOUT=2 -- TestInstance \
    && [ "$(grep -cF "instance export-data TestInstance" "$CALL_LOG")" = "1" ] \
-   && grep -qF "ERROR: export-data did not finish within 2s and was stopped" "$WORK/out" \
+   && grep -qF "ERROR: export-data got no answer within 2s; stopped waiting" "$WORK/out" \
    && ! grep -qF "not ready yet" "$WORK/out" \
    && [ "$(tail -n 1 "$CALL_LOG" | grep -cF "instance start TestInstance")" = "1" ]; then
-  pass "hung export: one attempt, reported as stopped, instance started again, exit 1"
+  pass "hung export: one attempt, reported, a start of the instance attempted, exit 1"
 else
   fail "a hung export was retried or not reported"; dump
 fi

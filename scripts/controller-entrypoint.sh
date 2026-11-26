@@ -195,15 +195,16 @@ fi
 # Also re-attempt if a previous first run was interrupted (marker not written)
 SEED_MARKER="$DATA_DIR/.seed-complete"
 
-# Time limits, in seconds, for the clusterioctl calls below: clusterioctl has no client-side
+# Time limit, in seconds, for the clusterioctl calls below: clusterioctl has no client-side
 # timeout and waits forever on a controller that does not answer (see seed-instances.sh).
-CTL_LOOKUP_TIMEOUT=25
+# The mod pack lookup gets the same limit as the changes: without its answer the pack is
+# created, and the controller accepts a second pack of the same name.
 CTL_ACTION_TIMEOUT=120
 
 # Resolve default mod pack ID (used by both first-run seeding and ongoing mod uploads)
 DEFAULT_MOD_PACK="${DEFAULT_MOD_PACK:-Base Game 2.1}"
 DEFAULT_FACTORIO_VERSION="${DEFAULT_FACTORIO_VERSION:-2.1}"
-MOD_PACK_ID=$(timeout -k 5 "$CTL_LOOKUP_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack list --output json \
+MOD_PACK_ID=$(timeout -k 5 "$CTL_ACTION_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod-pack list --output json \
   --config "$CONTROL_CONFIG" 2>/dev/null \
   | node /scripts/ctl-json.cjs mod-pack-id "$DEFAULT_MOD_PACK" 2>/dev/null || true)
 

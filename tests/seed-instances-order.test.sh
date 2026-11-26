@@ -94,6 +94,7 @@ SH
 #   STUB_HOSTS_FAIL  when set, `host list` fails the way clusterioctl does in JSON mode
 #   STUB_START_ERR   when set, `instance start` prints it on stderr and exits 1
 #   STUB_HANG        when set, a call whose arguments contain it never answers
+#   STUB_INSTANCES_FAIL  when set, `instance list` fails
 cat > "$WORK/bin/npx" <<'SH'
 #!/bin/bash
 if [ "${1:-}" != "clusterioctl" ]; then
@@ -107,7 +108,10 @@ case " $* " in *" --output json "*) json=true ;; esac
 args="$*"
 # A controller that accepts the connection and never answers: only a signal ends this.
 if [ -n "${STUB_HANG:-}" ]; then
-  case "$args" in *"$STUB_HANG"*) while :; do :; done ;; esac
+  case "$args" in *"$STUB_HANG"*) exec tail -f /dev/null ;; esac
+fi
+if [ -n "${STUB_INSTANCES_FAIL:-}" ]; then
+  case "$args" in *"instance list"*) echo '{"error":"CommandError","message":"Session timed out"}'; exit 1 ;; esac
 fi
 case "$args" in
   *"instance list"*|*"host list"*|*"host config list"*)
@@ -173,7 +177,9 @@ run_seed() {
   : > "$dir/calls.log"
   mkdir -p "$dir/tokens"
   set +e
-  env PATH="$WORK/bin:$PATH" CALL_LOG="$dir/calls.log" SEED_DATA_DIR="$dir/seed-data" \
+  # The outer limit turns a script that waits forever (a call that lost its own limit)
+  # into a failed case instead of a test that never returns.
+  timeout -k 5 300 env PATH="$WORK/bin:$PATH" CALL_LOG="$dir/calls.log" SEED_DATA_DIR="$dir/seed-data" \
     TOKENS_DIR="$dir/tokens" "$@" bash "$SEED_SCRIPT" "$WORK/config-control.json" "$count" > "$dir/run.out" 2>&1
   run_rc=$?
   set -e
@@ -438,9 +444,9 @@ fixture "$D" HungInstance
 hang_started=$SECONDS
 run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_HANG="instance create" CTL_ACTION_TIMEOUT=2
 if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
-   && grep -qF "ERROR: instance create 'HungInstance' did not finish within 2s and was stopped" "$D/run.out" \
+   && grep -qF "ERROR: instance create 'HungInstance' got no answer within 2s; stopped waiting" "$D/run.out" \
    && ! grep -qF "instance assign" "$D/calls.log"; then
-  pass "a hung instance create ends at the limit, is reported as stopped, and nothing follows it"
+  pass "a hung instance create ends at the limit, is reported, and nothing follows it"
 else
   fail "a hung instance create was not stopped and reported (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
 fi
@@ -451,7 +457,7 @@ fixture "$D" HungUpload
 hang_started=$SECONDS
 run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_HANG="instance save upload" CTL_TRANSFER_TIMEOUT=2
 if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
-   && grep -qF "ERROR: save upload 'world.zip' -> 'HungUpload' did not finish within 2s and was stopped" "$D/run.out" \
+   && grep -qF "ERROR: save upload 'world.zip' -> 'HungUpload' got no answer within 2s; stopped waiting" "$D/run.out" \
    && ! grep -qF "instance start HungUpload" "$D/calls.log"; then
   pass "a hung save upload ends at the transfer limit and the instance is not started"
 else
@@ -469,6 +475,31 @@ if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
   pass "the wait for hosts ends at its deadline and the unanswered host list is reported"
 else
   fail "a hung host list was not handled (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
+fi
+
+echo "=== Case 13: without an answer to instance list, nothing is created ==="
+D="$WORK/case-nolist-instances"
+fixture "$D" MaybeExists
+run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_INSTANCES_FAIL=1
+if [ "$run_rc" -ne 0 ] \
+   && grep -qF "ERROR: could not list the controller's instances, so cannot tell whether 'MaybeExists' exists. Not creating it." "$D/run.out" \
+   && ! grep -qF "instance create" "$D/calls.log"; then
+  pass "a failed instance list is a seeding failure and creates nothing"
+else
+  fail "an instance was created without knowing whether it exists (exit $run_rc)"; dump_run "$D"
+fi
+
+echo "=== Case 14: an instance list the controller never answers creates nothing either ==="
+D="$WORK/case-hang-instances"
+fixture "$D" MaybeHung
+hang_started=$SECONDS
+run_seed "$D" 0 STUB_HOSTS="$UPGRADED_HOSTS" STUB_HANG="instance list" CTL_ACTION_TIMEOUT=2
+if [ "$run_rc" -ne 0 ] && [ $((SECONDS - hang_started)) -lt 60 ] \
+   && grep -qF "cannot tell whether 'MaybeHung' exists" "$D/run.out" \
+   && ! grep -qF "instance create" "$D/calls.log"; then
+  pass "an unanswered instance list ends at its limit and creates nothing"
+else
+  fail "an unanswered instance list led to a create (exit $run_rc, $((SECONDS - hang_started))s)"; dump_run "$D"
 fi
 
 echo

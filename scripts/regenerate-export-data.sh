@@ -61,7 +61,9 @@ lookup() {
 
 restart_and_fail() {
   echo "Restarting '$INSTANCE' anyway..."
-  ctl "$CTL_ACTION_TIMEOUT" instance start "$INSTANCE" >/dev/null 2>&1 || true
+  if ! ctl "$CTL_ACTION_TIMEOUT" instance start "$INSTANCE" >/dev/null 2>&1; then
+    echo "WARNING: could not start '$INSTANCE' — start it once its host is ready" >&2
+  fi
   exit 1
 }
 
@@ -115,9 +117,9 @@ while :; do
   fi
   # timeout's own statuses: stopped at the limit (124), or killed after ignoring that (137).
   # An export that ran into the limit is not "not ready yet": trying again would only wait
-  # that long again.
+  # that long again. Only this client stops; the host may still be exporting.
   if [ "$export_rc" -eq 124 ] || [ "$export_rc" -eq 137 ]; then
-    echo "ERROR: export-data did not finish within ${CTL_TRANSFER_TIMEOUT}s and was stopped — check the log of the instance's host (docs/asset-export.md)" >&2
+    echo "ERROR: export-data got no answer within ${CTL_TRANSFER_TIMEOUT}s; stopped waiting. The host may still be exporting — check its log (docs/asset-export.md)" >&2
     restart_and_fail
   fi
   tries=$((tries + 1))

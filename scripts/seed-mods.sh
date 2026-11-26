@@ -50,7 +50,7 @@ for mod_file in "${MOD_FILES[@]}"; do
   timeout -k 5 "$CTL_TRANSFER_TIMEOUT" gosu clusterio npx clusterioctl --log-level error mod upload "$mod_file" \
     --config "$CONTROL_CONFIG" >/dev/null 2>&1 || upload_rc=$?
   if [ "$upload_rc" -eq 124 ] || [ "$upload_rc" -eq 137 ]; then
-    echo "    WARNING: Upload of ${mod_filename}.zip did not finish within ${CTL_TRANSFER_TIMEOUT}s and was stopped"
+    echo "    WARNING: Upload of ${mod_filename}.zip got no answer within ${CTL_TRANSFER_TIMEOUT}s; stopped waiting"
   elif [ "$upload_rc" -ne 0 ]; then
     echo "    WARNING: Failed to upload ${mod_filename}.zip (may already exist)"
   fi

@@ -11,6 +11,46 @@ traces back to its notice.
 Format: `## YYYY-MM-DD` heading, short bullets. Say what changed for someone running the
 images and what they must do. State the Clusterio / Factorio versions when they change.
 
+## 2026-11-25
+
+- **Plugins from npm: `CLUSTERIO_NPM_PLUGINS`.** Set it on the controller and every host to a
+  list of npm packages, each optionally with `@version`, comma or space separated
+  (`<plugin>@<version>,<other-plugin>@<version>`). They are installed with their
+  dependencies when the container starts; no mounts and no image of your own. Unset, nothing
+  changes. The six official plugins were and are in the images.
+  - The install lives in the container. A `restart` reuses it without the network; a
+    recreated container installs again and must reach the npm registry.
+  - The container exits 1 with `ERROR: CLUSTERIO_NPM_PLUGINS: …` when a package cannot be
+    installed, lacks the `clusterio-plugin` keyword (Clusterio would not load it), or was
+    built for another Clusterio version than the image's.
+    With `restart: unless-stopped` it then restarts until the install succeeds.
+  - To bake plugins into your own image, so a start needs no network: `FROM` the image, then
+    `RUN gosu clusterio node /scripts/install-npm-plugins.cjs "name@version"`.
+  - Release images only; a `custom` build refuses the variable. Plugin folders still go in
+    `/clusterio/external_plugins`.
+- **Fixed: installing a plugin could move the core packages.** `/clusterio/package.json`
+  recorded caret ranges, so `npm install` of a plugin built for a newer Clusterio (Clusterio's
+  own `plugin install` included) upgraded `@clusterio/controller` and `@clusterio/lib` and left
+  the rest: a 2.0.3 image ended up with lib 2.1.2. The images now record exact versions, as
+  dependencies and as npm `overrides`; every `@clusterio/*` package stays at the image's
+  version, including one a plugin brings in that the image did not have.
+  - npm therefore no longer refuses a plugin built for another Clusterio version.
+    `CLUSTERIO_NPM_PLUGINS` checks that itself and refuses; a bare `npm install` or
+    Clusterio's own `plugin install` installs it.
+  - **Clusterio's remote update no longer changes its own packages.** The update commands
+    (`controller update`, `host update`, the web interface's update button) run
+    `npm update --save`; with the exact versions that now succeeds and changes nothing for
+    `@clusterio/*` packages, and a plugin update pinned to a version fails with `EOVERRIDE`.
+    Before, on a `2.1.1.r1` controller the same command moved the named packages to 2.1.2
+    inside the container, until it was recreated. Upgrade Clusterio by changing the image tag.
+- **Fixed: a controller that failed to start left its container running.** When the controller
+  process stopped before it answered HTTP (a plugin that throws while loading, a config file it
+  cannot read), the container waited for it forever and no restart policy applied. It now
+  exits with the controller's status after `ERROR: the controller stopped before it answered
+  HTTP`. With `restart: unless-stopped` such a controller now restarts in a loop instead of
+  sitting idle; `docker logs` shows the cause above that line.
+- Clusterio `2.1.2`, unchanged.
+
 ## 2026-11-22
 
 - **Clusterio `2.1.2`** (from `2.1.1`). First pin: `2.1.2.r1`. Node `24.22.3`, the Factorio

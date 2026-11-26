@@ -45,6 +45,10 @@ start_log_streamer /clusterio/logs/host host
 source /scripts/install-plugins.sh
 install_external_plugins "$EXTERNAL_PLUGINS_DIR"
 
+# Plugins published on npm, named in CLUSTERIO_NPM_PLUGINS. Before the first Clusterio command,
+# so the plugins' config fields exist.
+install_npm_plugins
+
 # Pre-cache seed mods so the host doesn't need to download them from the controller.
 # Runs on every startup (not just first run) since the mods dir may be ephemeral.
 if [ -d "$SEED_MODS_DIR" ]; then

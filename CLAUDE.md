@@ -37,8 +37,10 @@ clusterio-docker/
 │   ├── seed-instances.sh          # Instance creation, assignment, save upload, auto-start
 │   ├── export-host-lib.sh         # Sourced by seed-instances.sh + regenerate-export-data.sh: what counts as a headless host
 │   ├── seed-mods.sh               # Mod upload to controller
-│   ├── install-plugins.sh         # External plugin npm install
-│   ├── install-release.cjs        # Release target: npm install of @clusterio/* at CLUSTERIO_VERSION + CLUSTERIO_PLUGINS
+│   ├── install-plugins.sh         # Sourced by both entrypoints: external plugin npm install, CLUSTERIO_NPM_PLUGINS
+│   ├── clusterio-packages.cjs     # Shared: @clusterio/* package names, npm overrides, version drift scan, peer-range rule
+│   ├── install-release.cjs        # Release target: npm install of @clusterio/* at CLUSTERIO_VERSION + CLUSTERIO_PLUGINS (exact versions)
+│   ├── install-npm-plugins.cjs    # CLUSTERIO_NPM_PLUGINS: installs npm-published plugins at start, verifies, fatal on failure
 │   ├── configure-host.cjs         # Host config reconciliation through the native CLI
 │   ├── verify-cli.cjs             # Offline native CLI + plugin-resolution check (consumer verification)
 │   ├── run-pre-start.sh           # Runs /etc/clusterio/pre-start.d hooks as clusterio
@@ -78,7 +80,7 @@ clusterio-docker/
 
 ```
 1. Create data dirs, fix permissions, remove stale lock files from an unclean stop
-2. Install external plugins (npm install if mounted)
+2. Install external plugins (npm install if mounted); CLUSTERIO_NPM_PLUGINS set? → install-npm-plugins.cjs (any failure → exit 1)
 3. FIRST_RUN check: does config-controller.json exist on the data volume?
    ├── YES → Skip to step 4
    └── NO (first run):
@@ -90,7 +92,7 @@ clusterio-docker/
 4. CLUSTERIO_LOG_RETENTION_DAYS set? → write controller.log_retention_days (every boot; invalid value → exit 1)
 5. Migrate a pre-2.0 config-control.json (control.* → ctl.* keys, in place, idempotent)
 6. Static-cache patch, pre-start hooks
-7. Start controller in background, wait until it answers HTTP
+7. Start controller in background, wait until it answers HTTP (the controller process stops first → ERROR, exit with its status)
 8. Host tokens (every start, HOST_COUNT > 0): provision-hosts.cjs, for N in 1..HOST_COUNT
    ├── clusterio-host-N.token accepted by GET /api/host-pairing/check → keep it
    ├── a host named clusterio-host-N is registered → WARNING, issue nothing
@@ -110,7 +112,7 @@ clusterio-docker/
 
 ```
 1. Create data dirs, fix permissions, remove stale lock files from an unclean stop
-2. Install external plugins (npm install if mounted)
+2. Install external plugins (npm install if mounted); CLUSTERIO_NPM_PLUGINS set? → install-npm-plugins.cjs (any failure → exit 1)
 3. Pre-cache seed mods (copy from seed-mods mount → host mods dir)
 4. Runtime client download (if FACTORIO_USERNAME + FACTORIO_TOKEN set, no client yet, SKIP_CLIENT!=true)
    └── Download once → stored in external volume (/opt/factorio-client), persists across restarts
@@ -204,6 +206,7 @@ Explicit CLUSTERIO_HOST_TOKEN takes precedence over the mounted token and decide
 | `DEFAULT_FACTORIO_VERSION` | No | `2.1` | Factorio version for auto-created mod packs |
 | `FACTORIO_USERNAME` | No | — | Factorio.com username |
 | `FACTORIO_TOKEN` | No | — | Factorio.com token |
+| `CLUSTERIO_NPM_PLUGINS` | No | — | npm plugins installed at start by `install-npm-plugins.cjs`: `name[@version]`, comma or space separated. Install failure, a non-plugin package or a moved `@clusterio/*` version → exit 1. Release target only |
 | `CLUSTERIO_LOG_RETENTION_DAYS` | No | — (Clusterio: `30`) | Written to `controller.log_retention_days` before start, every boot, when set. Whole number; `0` keeps logs forever; invalid → exit 1 |
 
 ### Host
@@ -212,6 +215,7 @@ Explicit CLUSTERIO_HOST_TOKEN takes precedence over the mounted token and decide
 | `HOST_NAME` | No | Container hostname | Must match `clusterio-host-N` pattern |
 | `CONTROLLER_URL` | No | `http://clusterio-controller:8080/` | Controller address |
 | `CLUSTERIO_HOST_TOKEN` | No | Auto from shared volume | Manual token override; also decides `host.id`. Rejected by the controller → exit 1 |
+| `CLUSTERIO_NPM_PLUGINS` | No | — | As on the controller |
 | `CLUSTERIO_LOG_RETENTION_DAYS` | No | — (Clusterio: `30`) | Written to `host.log_retention_days` before start, every boot, when set. Whole number; `0` keeps logs forever; invalid → exit 1 |
 | `FACTORIO_USERNAME` | No | — | Factorio.com username — triggers runtime game client download on first startup |
 | `FACTORIO_TOKEN` | No | — | Factorio.com token (from factorio.com/profile) |

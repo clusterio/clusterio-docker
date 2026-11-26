@@ -29,7 +29,9 @@ runs on release selections separately. Ordinary CLI verification accepts an expl
 expected plugin array and checks shared package resolution; without an array it reports
 discovery without claiming selection coverage.
 
-Choose a single case with `--case NAME`. Omitting it runs every case.
+Choose a single case with `--case NAME`. Omitting it runs every case. The `npm-plugins` case
+installs `timeshade@0.1.1` from the npm registry and imports its instance entrypoint, so it
+needs network access; it runs on release-target images only.
 
 Hosts the cases restart are stopped before they are replaced, and count as ready only when
 they are healthy **and** their own log contains `Started host`: the controller keeps a killed

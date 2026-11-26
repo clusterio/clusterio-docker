@@ -2,7 +2,8 @@
 
 How to develop a Clusterio plugin (Node + optional save-patched Lua module) using the prebuilt
 images — without rebuilding images and without the classic traps. For *running* third-party
-plugins, the README's [External Plugins](../README.md#external-plugins) section is enough; this
+plugins, the README's [External Plugins](../README.md#external-plugins) section is enough (a
+plugin published on npm is one `CLUSTERIO_NPM_PLUGINS` entry, with no mount); this
 guide is for writing one.
 
 ## Setup
@@ -106,6 +107,29 @@ edit → build (tsc → dist/) → docker restart <host container>
 **Windows note**: run RCON / clusterioctl commands with leading-slash arguments (e.g. `/command`)
 from PowerShell, not git-bash/MSYS — MSYS rewrites leading-slash args into filesystem paths,
 silently corrupting the command.
+
+## Publishing to npm
+
+A plugin published on npm is installed by naming it in `CLUSTERIO_NPM_PLUGINS` on the controller
+and every host — no mount (README, [Plugins from npm](../README.md#plugins-from-npm)). For the
+installer to accept your package, and for Clusterio to load it:
+
+| In `package.json` | Why |
+|---|---|
+| `"clusterio-plugin"` in `keywords` | Clusterio only loads npm packages that carry it. Without it the container exits with `… is not a Clusterio 2.x plugin`. |
+| `@clusterio/*` under `peerDependencies`, with ranges that include the image's Clusterio version | The ranges are how the installer tells which Clusterio the plugin was built for (optional peers are read too). A range that excludes the image's version stops the container with `… was built for @clusterio/lib <range>; this image is Clusterio <version>`. Clusterio minor versions can break plugins, so `~2.1.0` says more than `^2.0.0`. |
+| Everything needed at run time under `dependencies` | `devDependencies` are not installed. |
+| The built output in the published files (`dist/`, and `dist/web` for a web module) | Nothing is built in the container: an install from the registry does not run your `prepare` script, and the images contain no `vite` or `tsc`. Check with `npm pack --dry-run` before publishing. |
+
+- The installer does not check that the plugin loads. Entrypoints without the `.js` extension
+  pass every check above and then stop the controller at startup, and its container with it
+  (Setup, step 3).
+- Install scripts (`install`, `postinstall`) of your package and of its dependencies do run,
+  as the `clusterio` user.
+- To try a build before publishing, mount it as a folder (Setup). To try a published one, pin
+  the version, prerelease versions included: `CLUSTERIO_NPM_PLUGINS=<your-plugin>@1.3.0-rc.1`.
+- Confirm it: the container logs `Installed <your-plugin>@<version>`, and
+  `clusterioctl plugin list` (access in the table above) names the package.
 
 ## Worked example
 

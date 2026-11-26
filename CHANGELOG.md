@@ -37,8 +37,9 @@ images and what they must do. State the Clusterio / Factorio versions when they 
   creating it.`, counts a seeding failure, and the next start tries again. Before, a list
   that failed was read as "the instance does not exist", and the controller accepts a second
   instance of the same name.
-- **The wait for `HOST_COUNT` hosts** at the start of seeding ends 120 s after it began;
-  before, it ended after 30 polls two seconds apart, however long each poll took.
+- **The wait for `HOST_COUNT` hosts** at the start of seeding polls for 75 s by the clock.
+  Before, it was 30 polls two seconds apart, however long each poll took; with a controller
+  that answers at once that came to about 73 s.
 - **Tests.** `tests/ctl-timeout.test.cjs` fails on a `clusterioctl` call to a controller
   without `timeout` in `scripts/*.sh`. The stub tests cover an instance create, a save upload,
   a host list, an instance list and an export that never answer.

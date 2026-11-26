@@ -199,7 +199,7 @@ SEED_MARKER="$DATA_DIR/.seed-complete"
 # timeout and waits forever on a controller that does not answer (see seed-instances.sh).
 # The mod pack lookup gets the same limit as the changes: without its answer the pack is
 # created, and the controller accepts a second pack of the same name.
-CTL_ACTION_TIMEOUT=120
+CTL_ACTION_TIMEOUT="${CTL_ACTION_TIMEOUT:-120}"
 
 # Resolve default mod pack ID (used by both first-run seeding and ongoing mod uploads)
 DEFAULT_MOD_PACK="${DEFAULT_MOD_PACK:-Base Game 2.1}"

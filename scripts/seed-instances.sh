@@ -29,12 +29,13 @@ SEED_DATA_DIR="${SEED_DATA_DIR:-/clusterio/seed-data}"
 TOKENS_DIR="${TOKENS_DIR:-/clusterio/tokens}"
 # How long an auto-started instance gets to reach "running". Overridable for the same test.
 START_WAIT_SECONDS="${START_WAIT_SECONDS:-120}"
-# How long seeding waits for HOST_COUNT hosts to connect before it carries on.
-HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-120}"
+# How long seeding polls for HOST_COUNT hosts to connect before it carries on. A poll in
+# progress at that moment still finishes.
+HOST_WAIT_SECONDS="${HOST_WAIT_SECONDS:-75}"
 # Time limits, in seconds, for clusterioctl calls. clusterioctl has no client-side timeout
 # and waits forever on a controller that does not answer, so every call that contacts the
-# controller runs under `timeout` (pinned by tests/ctl-timeout.test.cjs). Overridable for
-# the ordering test.
+# controller runs under `timeout` (pinned by tests/ctl-timeout.test.cjs). Read from the
+# environment so the tests can shorten them; they are not documented settings.
 #   lookup    read-only queries, and the start attempt the start loop repeats
 #   action    changes the controller answers once it has applied them, and the one
 #             query whose answer decides whether an instance is created

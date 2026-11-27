@@ -1,0 +1,8 @@
+{
+	"name": "ci_npm_fixture_dep",
+	"version": "1.0.0",
+	"description": "Dependency of ci_npm_fixture: proves a plugin's own dependencies are installed with it.",
+	"type": "module",
+	"main": "index.js",
+	"license": "MIT"
+}

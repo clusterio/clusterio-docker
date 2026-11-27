@@ -1,0 +1,131 @@
+name: Publish revision pin
+
+# A revision pin is not built. Pushing the git tag <CLUSTERIO_VERSION>.r<N> (e.g. 2.1.2.r3)
+# gives the two images docker-build.yml published from `main` for the tagged commit a second,
+# immutable tag, then creates the GitHub Release. The pin is therefore the image that run
+# accepted, byte for byte.
+#
+# The separator before "r<N>" MUST be "." not "-". A hyphen makes "27-r1" a single
+# alphanumeric SemVer prerelease identifier, which SemVer-aware tooling (Renovate,
+# Dependabot) ranks ABOVE any purely-numeric identifier — so "2.0.0-alpha.27-r1" would sort
+# as newer than "2.0.0-alpha.28". "." keeps "r<N>" a separate identifier, so numeric
+# comparison on the "27" field still applies first.
+on:
+  push:
+    tags: ['*.r[0-9]*']
+
+env:
+  REGISTRY: ghcr.io
+  CONTROLLER_IMAGE: ${{ github.repository }}-controller
+  HOST_IMAGE: ${{ github.repository }}-host
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    # The wait step below can sit through a whole `main` run. Those took 10 to 11.5
+    # minutes when their jobs still ran one after another.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The tag must name the Clusterio version in the image — otherwise the immutable pin
+      # would lie about its contents.
+      - name: Assert revision-pin tag matches CLUSTERIO_VERSION
+        env:
+          T: ${{ github.ref_name }}
+        run: |
+          V=$(sed -nE 's/^ARG CLUSTERIO_VERSION=([^[:space:]]+).*/\1/p' Dockerfile.host | head -1)
+          test -n "$V" \
+            || { echo "::error::Could not resolve CLUSTERIO_VERSION from Dockerfile.host (ARG line reformatted or renamed?)"; exit 1; }
+          case "$T" in
+            "$V".r[0-9]*) echo "OK: tag '$T' pins CLUSTERIO_VERSION '$V'";;
+            *) echo "::error::Git tag '$T' must be '<CLUSTERIO_VERSION>.r<N>' with CLUSTERIO_VERSION=$V (from Dockerfile.host). Bump the Dockerfiles or fix the tag."; exit 1;;
+          esac
+
+      # A tag pushed right after a merge arrives while that commit's `main` run is still
+      # building the images. Wait for it; if it fails, so does this job.
+      - name: Wait for this commit's main run, if it is still going
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          COMMIT=$(git rev-parse HEAD)
+          RUN=$(gh run list --workflow docker-build.yml --branch main --event push --commit "$COMMIT" \
+            --json databaseId,status --jq '[.[] | select(.status != "completed")][0].databaseId // empty')
+          if [ -z "$RUN" ]; then
+            echo "No main run of $COMMIT is in progress."
+            exit 0
+          fi
+          echo "Waiting for main run $RUN of $COMMIT to publish its images..."
+          # Polled with `gh run view --json`, which needs only `actions: read`. `gh run
+          # watch` also reads check annotations and fails without `checks: read`.
+          while true; do
+            STATE=$(gh run view "$RUN" --json status,conclusion --jq '.status + " " + (.conclusion // "")')
+            case "$STATE" in
+              "completed success") echo "Main run $RUN passed."; break;;
+              completed*) echo "::error::Main run $RUN ended as '$STATE', so it published nothing to pin."; exit 1;;
+            esac
+            sleep 20
+          done
+
+      # The tagging script needs a buildx whose `imagetools create` has --prefer-index.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the images main published for this commit
+        env:
+          TAG: ${{ github.ref_name }}
+        # No pipe after the script: this step runs under `bash -e` without pipefail, so a
+        # pipe would report the last command's status and a refused pin would pass.
+        run: |
+          COMMIT=$(git rev-parse HEAD)
+          bash .github/scripts/pin-main-images.sh "$TAG" "$COMMIT" \
+            "${REGISTRY}/${CONTROLLER_IMAGE}" "${REGISTRY}/${HOST_IMAGE}" > pinned.txt
+          cat pinned.txt
+          cat pinned.txt >> "$GITHUB_STEP_SUMMARY"
+
+  # Once `pin` has tagged the images, publish the GitHub Release with the top CHANGELOG.md
+  # entry as its notes. A separate job so `pin` keeps read-only contents access. An existing
+  # release (a re-run, or one created by hand) is left unchanged.
+  release:
+    needs: pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Create GitHub Release from the top CHANGELOG entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — leaving it unchanged."
+            exit 0
+          fi
+          V=$(sed -nE 's/^ARG CLUSTERIO_VERSION=([^[:space:]]+).*/\1/p' Dockerfile.host | head -1)
+          ENTRY=$(awk '/^## /{n++; next} n==1' CHANGELOG.md)
+          [ -n "$V" ] && [ -n "$ENTRY" ] || { echo "::error::Could not read CLUSTERIO_VERSION or the top CHANGELOG.md entry."; exit 1; }
+          {
+            echo "Images: \`${REGISTRY}/${CONTROLLER_IMAGE}:${TAG}\` and \`${REGISTRY}/${HOST_IMAGE}:${TAG}\` — immutable pin on Clusterio **${V}**. Upstream notes: https://github.com/clusterio/clusterio/releases/tag/v${V}. Change notice (top entry of \`CHANGELOG.md\`):"
+            echo
+            printf '%s\n' "$ENTRY"
+          } > release-notes.md
+          gh release create "$TAG" --verify-tag --title "$TAG — Clusterio $V" --notes-file release-notes.md

@@ -31,8 +31,9 @@ Please make sure CI is green before requesting a merge.
 README → "Branch model". Base PRs on `main`. A `factorio-<X.Y>` branch builds the `custom`
 target, for a Factorio version the npm release does not support.
 
-- **Pull requests into `main`**, **`main`**, and **tags** build the `release` target
-  (npm-published `@clusterio/*` packages, pinned via `CLUSTERIO_VERSION`).
+- **Pull requests into `main`** and **`main`** build the `release` target
+  (npm-published `@clusterio/*` packages, pinned via `CLUSTERIO_VERSION`). A revision pin
+  tag builds nothing: it tags the images `main` published for that commit.
 - **Pull requests into `factorio-*` branches** build the `custom` target from the fork branch
   matching the PR's **base** — faithful to what the merge will publish (used when the npm release
   lags a new Factorio version). PR builds never push images.
@@ -49,9 +50,10 @@ in both Dockerfiles, open a PR, and merge once green — the `main` push publish
 the images.
 
 > **Immutable pins are git-tagged `<CLUSTERIO_VERSION>.r<N>`** (e.g. `2.1.2.r1`),
-> **not** `v*`. Only the `<version>.rN` shape triggers a tag build — a `v1.2.0`-style tag
-> matches **no** trigger and **silently does nothing** (no
-> build, no images, no error). Increment `.rN` for docker-layer changes on the same Clusterio
+> **not** `v*`. Only the `<version>.rN` shape triggers the pin workflow — a `v1.2.0`-style
+> tag matches **no** trigger and **silently does nothing** (no images, no error). Tag the
+> commit `:main` was last published from; on any other commit that has `release-pin.yml`
+> the workflow fails and tags nothing. Increment `.rN` for docker-layer changes on the same Clusterio
 > version; it resets to `r1` on each Clusterio bump.
 
 ## Pull requests

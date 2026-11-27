@@ -6,14 +6,8 @@ on:
     # GitHub's single-star stops at '/'. That keeps feature branches from publishing
     # image tags. Pre-merge validation for release branches comes from pull_request below.
     branches: ['*']
-    # Immutable revision pins: git tag <CLUSTERIO_VERSION>.r<N> (e.g. 2.0.1.r1)
-    # → published verbatim on the release target. Replaces the retired v* SemVer tags.
-    # NOTE: the separator before "r<N>" MUST be "." not "-". A hyphen makes "27-r1" a
-    # single alphanumeric SemVer prerelease identifier, which SemVer-aware tooling (e.g.
-    # Renovate/Dependabot) ranks ABOVE any purely-numeric identifier — so "2.0.0-alpha.27-r1"
-    # would sort as newer than "2.0.0-alpha.28". "." keeps "r<N>" a separate identifier,
-    # so numeric comparison on the "27" field still applies first.
-    tags: ['*.r[0-9]*']
+    # Revision pin tags (<CLUSTERIO_VERSION>.r<N>) build nothing here: release-pin.yml gives
+    # the images this workflow published from `main` their pin tag.
   pull_request:
     branches: [main, 'factorio-*']
 
@@ -35,10 +29,8 @@ env:
   PREVIOUS_CONTROLLER_IMAGE: ghcr.io/clusterio/clusterio-docker-controller@sha256:949e7cba39825a593185c1aa292acd27467aaff6bbf6b76cb9511fdb2f4e9483
 
 jobs:
-  # Cheap, fast-failing gates, split out of `build` for two reasons: they report a
-  # stale CHANGELOG or version reference in ~20s instead of behind the 3-minute
-  # integration suite, and splitting them lets `build` depend on `test` without
-  # pushing that feedback to the end of the run.
+  # Cheap, fast-failing gates. They run beside the other jobs, so a stale CHANGELOG or
+  # version reference is reported in under a minute; `publish` needs this job.
   gates:
     runs-on: ubuntu-latest
     permissions:
@@ -86,6 +78,11 @@ jobs:
       - name: Export regeneration — headless hosts are refused
         run: bash tests/regenerate-export-guard.test.sh
 
+      # Stubbed, no registry. release-pin.yml runs the script for real only when a
+      # revision pin tag is pushed, so this is the check of it a pull request gets.
+      - name: Revision pin — only main's images for the tagged commit
+        run: bash tests/pin-main-images.test.sh
+
       - name: Resolve Clusterio version for release image tag
         id: clusterio_version
         run: echo "version=$(sed -nE 's/^ARG CLUSTERIO_VERSION=([^[:space:]]+).*/\1/p' Dockerfile.host | head -1)" >> "$GITHUB_OUTPUT"
@@ -110,32 +107,19 @@ jobs:
           [ "$rc" -eq 0 ] \
             || { echo "Update the stale file(s) alongside the CLUSTERIO_VERSION bump (see CLAUDE.md Release Process step 1)."; exit 1; }
 
-      # A revision pin tag (e.g. 2.0.1.r1) must match the CLUSTERIO_VERSION
-      # baked into the image — otherwise the immutable pin would lie about its contents.
-      - name: Assert revision-pin tag matches CLUSTERIO_VERSION
-        if: github.ref_type == 'tag'
-        env:
-          V: ${{ steps.clusterio_version.outputs.version }}
-          T: ${{ github.ref_name }}
-        run: |
-          case "$T" in
-            "$V".r[0-9]*) echo "OK: tag '$T' pins CLUSTERIO_VERSION '$V'";;
-            *) echo "::error::Git tag '$T' must be '<CLUSTERIO_VERSION>.r<N>' with CLUSTERIO_VERSION=$V (from Dockerfile.host). Bump the Dockerfiles or fix the tag."; exit 1;;
-          esac
-
-  # Builds and PUBLISHES. All acceptance gates must pass first.
-  # Previously, the push ran in
-  # parallel with (in practice, before) the integration suite, so a red test run
-  # still moved :latest — that happened for real on 2026-07-23. `test` builds its
-  # own images from the same source. This job also checks its selected release/custom
-  # candidate and pushes those loaded images without a second build.
+  # Builds the images selected for publication and runs acceptance on them. It pushes
+  # nothing and holds no registry permission: the accepted images go to `publish` as an
+  # artifact, and `publish` runs only when this job and every other job passed. Running
+  # beside `test` and `consumer-smoke`, not after them, is what keeps a run short.
   build:
-    needs: [gates, test, consumer-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
+    outputs:
+      controller_metadata: ${{ steps.meta-controller.outputs.json }}
+      host_metadata: ${{ steps.meta-host.outputs.json }}
+      image_ids: ${{ steps.save.outputs.image_ids }}
 
     steps:
       # Shallow is fine here: the changelog gate (the only consumer of full
@@ -152,7 +136,7 @@ jobs:
       # the fork branch matching the PR's BASE.
       - name: Clone Clusterio fork (non-main branch pushes + factorio-* PRs)
         if: >-
-          (github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) ||
+          (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
           (github.event_name == 'pull_request' && startsWith(github.base_ref, 'factorio-'))
         env:
           REF_NAME: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
@@ -172,43 +156,32 @@ jobs:
             || { echo "::error::The Clusterio fork source is version '${FORK_VERSION:-unknown}'; these images need 2.1.1 or newer."; exit 1; }
           echo "CLUSTERIO_TARGET=custom" >> "$GITHUB_ENV"
 
-      - name: Set Clusterio target (release — main-targeted PRs, main, and tags)
+      - name: Set Clusterio target (release — main-targeted PRs and main)
         if: >-
           (github.event_name == 'pull_request' && !startsWith(github.base_ref, 'factorio-')) ||
-          github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+          github.ref == 'refs/heads/main'
         run: echo "CLUSTERIO_TARGET=release" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Resolve Clusterio version for release image tag
         id: clusterio_version
         run: echo "version=$(sed -nE 's/^ARG CLUSTERIO_VERSION=([^[:space:]]+).*/\1/p' Dockerfile.host | head -1)" >> "$GITHUB_OUTPUT"
 
-      # The version/revision-pin assertions live in the `gates` job — this job only
-      # needs the resolved value above for the image tags.
+      # The version assertion lives in the `gates` job — this job only needs the resolved
+      # value above for the image tags.
 
       - name: Extract metadata for Controller
         id: meta-controller
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.CONTROLLER_IMAGE }}
-          # latest=false: :latest is controlled solely by the is_default_branch raw tag
-          # below. Without this, a git-tag (.rN pin) push would auto-move :latest onto the
-          # pinned build.
+          # latest=false: :latest is controlled solely by the is_default_branch raw tag below.
           flavor: latest=false
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.clusterio_version.outputs.version }},enable={{is_default_branch}}
             type=raw,value=${{ github.ref_name }}-clusterio-${{ steps.clusterio_version.outputs.version }},enable=${{ github.event_name != 'pull_request' && github.ref_type == 'branch' }}
@@ -222,14 +195,11 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.HOST_IMAGE }}
-          # latest=false: :latest is controlled solely by the is_default_branch raw tag
-          # below. Without this, a git-tag (.rN pin) push would auto-move :latest onto the
-          # pinned build.
+          # latest=false: :latest is controlled solely by the is_default_branch raw tag below.
           flavor: latest=false
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.clusterio_version.outputs.version }},enable={{is_default_branch}}
             type=raw,value=${{ github.ref_name }}-clusterio-${{ steps.clusterio_version.outputs.version }},enable=${{ github.event_name != 'pull_request' && github.ref_type == 'branch' }}
@@ -280,20 +250,122 @@ jobs:
           CONTROLLER_CANDIDATE: ${{ fromJSON(steps.meta-controller.outputs.json).tags[0] }}
           HOST_CANDIDATE: ${{ fromJSON(steps.meta-host.outputs.json).tags[0] }}
         run: |
+          # A release image has to pass every case: one that did not run ("unverified" in
+          # the report) fails this step. A custom image has no npm-plugins case, so it is
+          # not held to that.
+          COMPLETE=
+          if [ "$CLUSTERIO_TARGET" = release ]; then COMPLETE=--require-complete; fi
           node tests/consumer-smoke.mjs "$CONTROLLER_CANDIDATE" "$HOST_CANDIDATE" \
             --plugins global_chat,player_sync,player_auth,research_sync,statistics_exporter,subspace_storage \
-            --skip-package --previous-host "$PREVIOUS_HOST_IMAGE" --previous-controller "$PREVIOUS_CONTROLLER_IMAGE"
+            --skip-package $COMPLETE --previous-host "$PREVIOUS_HOST_IMAGE" --previous-controller "$PREVIOUS_CONTROLLER_IMAGE"
       - name: Retain candidate acceptance evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: publication-candidate-acceptance
           path: ci-artifacts/
-      - name: Push accepted images without rebuilding
-        if: github.event_name != 'pull_request'
+      # Every tag of both images in one archive, and the two image ids `publish` compares
+      # the loaded images against.
+      - name: Save the accepted images
+        id: save
         env:
           CONTROLLER_METADATA: ${{ steps.meta-controller.outputs.json }}
           HOST_METADATA: ${{ steps.meta-host.outputs.json }}
+        run: |
+          node <<'NODE'
+          const {execFileSync}=require("node:child_process"), fs=require("node:fs");
+          const [controller,host]=["CONTROLLER_METADATA","HOST_METADATA"].map(key=>JSON.parse(process.env[key]).tags);
+          const id=tag=>execFileSync("docker",["image","inspect",tag,"--format","{{.Id}}"],{encoding:"utf8"}).trim();
+          fs.mkdirSync("candidate");
+          execFileSync("docker",["save","-o","candidate/images.tar",...controller,...host],{stdio:"inherit"});
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,"image_ids="+JSON.stringify({controller:id(controller[0]),host:id(host[0])})+"\n");
+          NODE
+      - name: Hand the accepted images to the publish job
+        uses: actions/upload-artifact@v7
+        with:
+          name: publication-candidate-images
+          path: candidate/images.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+
+  # Pushes the images `build` accepted. It runs only when every job it needs passed, and
+  # it builds nothing: the images come from the artifact and are compared with the ids
+  # `build` recorded. On a pull request it loads and checks them and pushes nothing, so
+  # each run exercises the hand-over. This is the only job with registry write access.
+  publish:
+    needs: [gates, test, consumer-smoke, build]
+    runs-on: ubuntu-latest
+    # The cap the job that pushed had before. A cancel between the two images would leave
+    # the moving tags naming a controller and a host from different commits.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Fetch the accepted images
+        uses: actions/download-artifact@v8
+        with:
+          name: publication-candidate-images
+          path: candidate
+
+      - name: Load the accepted images and check their ids
+        env:
+          CONTROLLER_METADATA: ${{ needs.build.outputs.controller_metadata }}
+          HOST_METADATA: ${{ needs.build.outputs.host_metadata }}
+          IMAGE_IDS: ${{ needs.build.outputs.image_ids }}
+        run: |
+          docker load -i candidate/images.tar
+          node <<'NODE'
+          const {execFileSync}=require("node:child_process");
+          const accepted=JSON.parse(process.env.IMAGE_IDS);
+          for (const [role,key] of [["controller","CONTROLLER_METADATA"],["host","HOST_METADATA"]]) {
+            const tags=JSON.parse(process.env[key]).tags;
+            if (!tags.length || !/^sha256:[0-9a-f]{64}$/.test(accepted[role])) throw Error("No tags or no accepted image id for the "+role);
+            for (const tag of tags) {
+              const id=execFileSync("docker",["image","inspect",tag,"--format","{{.Id}}"],{encoding:"utf8"}).trim();
+              if (id!==accepted[role]) throw Error(tag+" is "+id+" after loading; acceptance ran on "+accepted[role]);
+              console.log("OK: "+tag+" is the accepted "+role+" image "+id);
+            }
+          }
+          NODE
+
+      # Nothing orders the publish jobs of two runs. The run of an older commit can get here
+      # after a newer commit's run has pushed; it then pushes nothing, so the moving tags
+      # stay on the newer commit.
+      - name: Check this commit is still the tip of the branch
+        id: tip
+        if: github.event_name != 'pull_request'
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          TIP=$(git ls-remote origin "$REF" | cut -f1)
+          [ -n "$TIP" ] || { echo "::error::Could not read $REF from the remote."; exit 1; }
+          if [ "$TIP" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$REF is at $TIP, not at $SHA. The run of that commit publishes; this one pushes nothing."
+          fi
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request' && steps.tip.outputs.current == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the accepted images
+        if: github.event_name != 'pull_request' && steps.tip.outputs.current == 'true'
+        env:
+          CONTROLLER_METADATA: ${{ needs.build.outputs.controller_metadata }}
+          HOST_METADATA: ${{ needs.build.outputs.host_metadata }}
         run: |
           node <<'NODE'
           const {execFileSync}=require("node:child_process");
@@ -313,46 +385,9 @@ jobs:
             awk '/^## /{n++} n==1' CHANGELOG.md
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Tag builds only: once `build` has pushed the pinned images, publish the GitHub
-  # Release with the top CHANGELOG.md entry as its notes. A separate job so `build`
-  # keeps read-only contents access. An existing release (a re-run, or one created
-  # by hand) is left unchanged.
-  release:
-    needs: build
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Create GitHub Release from the top CHANGELOG entry
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — leaving it unchanged."
-            exit 0
-          fi
-          V=$(sed -nE 's/^ARG CLUSTERIO_VERSION=([^[:space:]]+).*/\1/p' Dockerfile.host | head -1)
-          ENTRY=$(awk '/^## /{n++; next} n==1' CHANGELOG.md)
-          [ -n "$V" ] && [ -n "$ENTRY" ] || { echo "::error::Could not read CLUSTERIO_VERSION or the top CHANGELOG.md entry."; exit 1; }
-          {
-            echo "Images: \`${REGISTRY}/${CONTROLLER_IMAGE}:${TAG}\` and \`${REGISTRY}/${HOST_IMAGE}:${TAG}\` — immutable pin on Clusterio **${V}**. Upstream notes: https://github.com/clusterio/clusterio/releases/tag/v${V}. Change notice (top entry of \`CHANGELOG.md\`):"
-            echo
-            printf '%s\n' "$ENTRY"
-          } > release-notes.md
-          gh release create "$TAG" --verify-tag --title "$TAG — Clusterio $V" --notes-file release-notes.md
-
   # Integration suite. Builds its own images from the same source (see "Build
-  # images" below) rather than pulling the registry, so it depends only on the
-  # cheap gates — `build` now waits on THIS job before publishing.
+  # images" below) rather than pulling the registry. `publish` needs this job.
   test:
-    needs: gates
     runs-on: ubuntu-latest
     # Above the ~50 minutes the steps' own waits add up to, so a slow run fails at a
     # step (and dumps logs) instead of being cancelled by this cap.
@@ -420,7 +455,7 @@ jobs:
       # must run the fork core the merge will publish (used when npm lags a Factorio line).
       - name: Clone Clusterio fork (non-main branch pushes + factorio-* PRs)
         if: >-
-          (github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) ||
+          (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
           (github.event_name == 'pull_request' && startsWith(github.base_ref, 'factorio-'))
         env:
           REF_NAME: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
@@ -813,9 +848,8 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # Supplemental release selections. The publish job separately tests its exact target.
+  # Supplemental release selections. The `build` job separately tests its exact target.
   consumer-smoke:
-    needs: gates
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

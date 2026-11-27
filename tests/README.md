@@ -6,8 +6,27 @@ Fast regressions:
 bash tests/seed-instances-order.test.sh
 bash tests/seed-mod-versions.test.sh
 bash tests/regenerate-export-guard.test.sh
+bash tests/pin-main-images.test.sh
 node --test tests/*.test.cjs
 ```
+
+None of these needs Docker or a network. CI runs them in the `gates` job.
+
+| Test | Script under test | What it covers |
+|---|---|---|
+| `seed-instances-order.test.sh` | `scripts/seed-instances.sh` | No instance config is pushed after `instance assign`; each seed folder's host is addressed by the id its token names; calls that never answer |
+| `seed-mod-versions.test.sh` | `scripts/seed-mods.sh` | The mod pack gets the numerically highest version of each seed mod |
+| `regenerate-export-guard.test.sh` | `scripts/regenerate-export-data.sh` | A headless host is refused unless `--allow-headless` is given; a failed lookup is refused too |
+| `pin-main-images.test.sh` | `.github/scripts/pin-main-images.sh` | Which images a revision pin tags, and that nothing is tagged when one is refused |
+| `ctl-json.test.cjs` | `scripts/ctl-json.cjs` | Reading `clusterioctl --output json` answers |
+| `ctl-timeout.test.cjs` | `scripts/*.sh` | Every `clusterioctl` call to a controller runs under `timeout` |
+| `host-config.test.cjs` | `scripts/configure-host.cjs` | Which token, id, name and paths a host is configured with |
+| `host-token.test.cjs` | `scripts/host-token.cjs` | The host id a token names |
+| `install-npm-plugins.test.cjs` | `scripts/install-npm-plugins.cjs` | Which `CLUSTERIO_NPM_PLUGINS` values are refused, and what makes an install unusable |
+| `install-release.test.cjs` | `scripts/install-release.cjs` | The packages a `CLUSTERIO_PLUGINS` selection installs |
+| `plugin-resolution.test.cjs` | `scripts/check-plugin-resolution.cjs` | A duplicate `@clusterio/lib` is reported |
+| `provision-hosts.test.cjs` | `scripts/provision-hosts.cjs` | Which host tokens are kept, issued or left alone |
+| `spritesheet-pixels.test.cjs` | `tests/spritesheet-pixels.cjs` | The icon counter CI's export check uses |
 
 Build the release selection you intend to test, then run one acceptance command:
 
@@ -29,9 +48,25 @@ runs on release selections separately. Ordinary CLI verification accepts an expl
 expected plugin array and checks shared package resolution; without an array it reports
 discovery without claiming selection coverage.
 
+Options of `tests/consumer-smoke.mjs`, after the controller and host image:
+
+| Option | Effect |
+|---|---|
+| `--plugins <names>` | The bundled plugins both images must report, comma separated, or `none` (the default). The run fails when an image reports another set |
+| `--case <name>` | Run one case from the table below. Default: every case |
+| `--skip-package` | Skip the check that packs `seed-data/external_plugins/ci_fixture`, installs it into an image derived from the controller image and starts the cluster on that image |
+| `--previous-host <image>` | Run `upgrade`. Without it the case is recorded as unverified |
+| `--previous-controller <image>` | With `--previous-host`, run `cluster-upgrade`. Without both it is recorded as unverified |
+| `--require-complete` | Fail the run when any case is unverified. Not accepted together with `--case` |
+
 Choose a single case with `--case NAME`. Omitting it runs every case. The `npm-plugins` case
-installs `timeshade@0.1.1` from the npm registry and imports its instance entrypoint, so it
-needs network access; it runs on release-target images only.
+runs on release-target images only and needs no network: it starts `tests/npm-registry.cjs`
+in a container of the host image, which serves the two packages under `tests/npm-fixture/`
+(a plugin with `@clusterio/*` peer ranges, and its dependency), and points the host at it
+with `NPM_CONFIG_REGISTRY`. npm also asks a registry about the `@clusterio/*` packages the
+plugin names as peers; the fixture registry answers from the image's own installation and
+serves none of their tarballs. The case fails when npm requests anything the registry does
+not hold; the requests are in the report as `npmRegistryRequests`.
 
 Hosts the cases restart are stopped before they are replaced, and count as ready only when
 they are healthy **and** their own log contains `Started host`: the controller keeps a killed
@@ -62,6 +97,10 @@ after the batch. This is not an atomic configuration transaction.
 
 Missing `--previous-host` records upgrade as **unverified**, and `cluster-upgrade` needs both
 `--previous-host` and `--previous-controller`; either gap sets `coverageComplete: false`.
+`coverageComplete` in `result.json` is true when every case ran and passed. A case that did
+not run has status `unverified` and does not change the verdict, unless the run was given
+`--require-complete`: then it fails, naming the cases. CI passes that flag for the
+release-target images it publishes.
 A passing run covers only its listed cases and build configuration. Tests use no game
 world or client download. `cluster-upgrade` starts the candidates on a controller database
 (hosts, instances), tokens and host configuration written by the previous images; it starts
@@ -76,8 +115,10 @@ for inspection.
 ## CI and local custom builds
 
 PR CI tests minimal and selected release images with independent BuildKit cache scopes.
-The publication job builds its actual release/custom target, runs acceptance on those
-loaded full images, then pushes the same images without rebuilding. Existing seeded
+The `build` job builds the actual release/custom target and runs acceptance on those
+loaded full images, with `--require-complete` on the release target. The `publish` job
+loads the same images from the run's artifact, checks their ids and pushes them without
+rebuilding; on a pull request it pushes nothing. Existing seeded
 integration continues to cover Factorio instance startup.
 
 For a custom source test, use the existing canonical Clusterio checkout (Clusterio `2.1.1` or
@@ -101,4 +142,6 @@ all of these. `ci-artifacts/` is not tracked, so a report directory name alone i
 nothing to another reader.
 
 CI uploads the reports of its own runs as the `publication-candidate-acceptance` and
-`consumer-smoke-<plugins>` artifacts.
+`consumer-smoke-<plugins>` artifacts. `publication-candidate-images` is the image archive
+`build` hands to `publish`, kept for one day. "Re-run failed jobs" does not run `build` again
+when it passed, so after a day `publish` finds no archive: re-run all jobs.

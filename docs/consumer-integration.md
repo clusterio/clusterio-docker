@@ -8,8 +8,8 @@ How to use clusterio-docker images in a downstream project.
 |-----|--------|----------|
 | `latest` / `main` | npm registry (`@clusterio/*`), pinned to **`2.1.2`** — **moves** as the docker layer rebuilds | Stable, published Clusterio (newest) |
 | `2.1.2` | Same as `latest` — the bundled Clusterio version; **moves** on rebuild | Track a Clusterio version |
-| `2.1.2.rN` | An **immutable** revision pin (cut from a git tag); `.rN` bumps for docker-layer fixes on the same Clusterio version | **Production — pin this** |
-| `<branch>` | Built from fork branch `solarcloud7/clusterio:<branch>` on a **non-main branch push** (falls back to the fork's default branch, `master`). PRs into `main`, `main`, and tags build the `release` target. | `custom`/fork builds (a `factorio-*` line for a Factorio version the npm release does not support) |
+| `2.1.2.rN` | An **immutable** revision pin (cut from a git tag; the same digest `main` had at that commit); `.rN` bumps for docker-layer fixes on the same Clusterio version | **Production — pin this** |
+| `<branch>` | Built from fork branch `solarcloud7/clusterio:<branch>` on a **non-main branch push** (falls back to the fork's default branch, `master`). PRs into `main` and `main` build the `release` target. | `custom`/fork builds (a `factorio-*` line for a Factorio version the npm release does not support) |
 
 ```yaml
 # Example: pull the stable images

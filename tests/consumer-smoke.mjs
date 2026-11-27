@@ -5,11 +5,12 @@ import {mkdirSync, writeFileSync, cpSync, readFileSync} from "node:fs";
 import {resolve, join} from "node:path";
 import {randomUUID, createHash} from "node:crypto";
 const [controllerImage, hostImage, ...flags] = process.argv.slice(2);
-assert.ok(controllerImage && hostImage, "consumer-smoke.mjs CONTROLLER HOST [--plugins names|none] [--case name] [--skip-package] [--previous-host IMAGE] [--previous-controller IMAGE]");
+assert.ok(controllerImage && hostImage, "consumer-smoke.mjs CONTROLLER HOST [--plugins names|none] [--case name] [--skip-package] [--require-complete] [--previous-host IMAGE] [--previous-controller IMAGE]");
 const options = {plugins:"none", case:"all"};
 for(let i=0;i<flags.length;i++) {
   const key=flags[i];
   if(key==="--skip-package") options.skipPackage=true;
+  else if(key==="--require-complete") options.requireComplete=true;
   else if(["--plugins","--case","--previous-host","--previous-controller"].includes(key)) {
     assert.ok(flags[i+1] && !flags[i+1].startsWith("--"), "Missing value for "+key);
     options[key.slice(2)]=flags[++i];
@@ -17,6 +18,7 @@ for(let i=0;i<flags.length;i++) {
 }
 const cases=["lifecycle","shutdown","stale-lock","rotation","overrides","saved-identity","hook-identity","zero-id","host-wipe","scale-out","controller-wipe","failures","npm-plugins","upgrade","cluster-upgrade"];
 assert.ok(options.case==="all" || cases.includes(options.case), "Unknown acceptance case");
+assert.ok(!options.requireComplete || options.case==="all", "--require-complete needs every case: drop --case");
 const expected=options.plugins==="none"?[]:options.plugins.split(",").sort();
 const run="cd-smoke-"+randomUUID().slice(0,12), label="clusterio-docker.smoke";
 const directory=resolve("ci-artifacts",run); mkdirSync(directory,{recursive:true});
@@ -345,22 +347,41 @@ try {
     assert.match(logsOf(dead),/ERROR: the controller stopped before it answered HTTP/);
     remove(dead);
   });
-  // CLUSTERIO_NPM_PLUGINS, against the real registry. Release images only: a custom build refuses it.
+  // CLUSTERIO_NPM_PLUGINS, from a registry this run owns (tests/npm-registry.cjs serving
+  // tests/npm-fixture). Release images only: a custom build refuses it.
   if(report.hostBuildInfo.clusterioTarget==="release") await scenario("npm-plugins",async()=>{
-    // Small, and none of its dependencies is a plugin, so nothing it pulls in is read by the peer-range check.
-    const spec="timeshade@0.1.1";
-    await restartHost({CLUSTERIO_NPM_PLUGINS:spec});
+    const registry=run+"-npm-registry", spec="ci_npm_fixture@0.1.0";
+    docker("create","--name",registry,"--label",label+"="+run,"--network",run,"--network-alias","npm-registry",
+      "--user","clusterio","--entrypoint","node",report.images.host,"/tmp/npm-registry.cjs","/tmp/packages","/clusterio");containers.push(registry);
+    docker("cp","tests/npm-registry.cjs",registry+":/tmp/npm-registry.cjs");
+    docker("cp","tests/npm-fixture/.",registry+":/tmp/packages");
+    docker("start",registry);
+    // Ready, or exited: a registry that could not start is reported with its own output.
+    const ready=/^registry ready: ci_npm_fixture, ci_npm_fixture_dep$/m;
+    await until(()=>ready.test(logsOf(registry)) || JSON.parse(docker("inspect",registry))[0].State.Status==="exited","fixture registry");
+    assert.match(logsOf(registry),ready,"the fixture registry did not start:\n"+logsOf(registry).slice(-2000));
+    await restartHost({CLUSTERIO_NPM_PLUGINS:spec,NPM_CONFIG_REGISTRY:"http://npm-registry:4873/"});
     assert.ok(logsOf(host).includes("Installed "+spec));
-    assert.match(local(host,"host","plugin","list"),/ - timeshade$/m);
+    assert.match(local(host,"host","plugin","list"),/ - ci_npm_fixture$/m);
+    // npm asked this registry for nothing it does not hold: the plugin, its dependency, and
+    // what the image's own @clusterio packages are (it downloads none of those; the registry
+    // answers a request for one of their tarballs with 404).
+    const requests=logsOf(registry).split("\n").filter(line=>/^[A-Z]+ \//.test(line));
+    report.npmRegistryRequests=requests;
+    assert.deepEqual(requests.filter(line=>!line.endsWith(" 200")),[],"npm asked the fixture registry for something it does not hold");
+    for(const name of ["ci_npm_fixture","ci_npm_fixture_dep"])
+      assert.ok(requests.some(line=>line.startsWith("GET /"+name+"/-/")),name+" was not downloaded from the fixture registry");
     // Installed and listed does not mean it loads: @hornwitser/server_select@2.0.1 is both, and its
     // entrypoints do not resolve on Clusterio 2.x. Import the one this host's instances load, by
-    // path, as Clusterio's plugin loader does.
+    // path, as Clusterio's plugin loader does. The fixture's entrypoint imports its dependency.
     docker("exec","--user","clusterio","-w","/clusterio",host,"node","--input-type=module","-e",
-      'const {plugin}=await import("timeshade");await import("/clusterio/node_modules/timeshade/"+plugin.instanceEntrypoint)');
+      'const {plugin}=await import("ci_npm_fixture");await import("/clusterio/node_modules/ci_npm_fixture/"+plugin.instanceEntrypoint)');
     // Installing a plugin leaves every core package where the image put it.
     const core=docker("exec",host,"sh","-c","cat /clusterio/node_modules/@clusterio/*/package.json | grep '\"version\"' | sort -u");
     assert.equal(core,'"version": "'+report.hostBuildInfo.clusterioVersion+'",');
-    // A restart reuses the install; only a recreated container goes back to the registry.
+    // A restart reuses the install; only a recreated container goes back to the registry,
+    // which is gone by now.
+    remove(registry);
     docker("restart","-t","60",host);await hostReady(host);
     assert.ok(logsOf(host).includes("npm plugins already installed: "+spec));
     // A refused value stops the container before the host goes on. Which values are refused is unit-tested.
@@ -445,7 +466,15 @@ try {
     report.cases.push({name:"cluster-upgrade",status:"unverified",reason:"Needs --previous-host and --previous-controller"});
     if(options.case==="cluster-upgrade")throw Error("--case cluster-upgrade requires --previous-host and --previous-controller");
   }
-  report.coverageComplete=report.cases.every(entry=>entry.status==="passed");
+  // False when a case did not run (status "unverified": this invocation lacked what the case
+  // needs). The verdict stays PASS unless --require-complete asks for every case.
+  // A run of every case also has to hold an entry for each case in the list at the top.
+  const absent=options.case==="all"?cases.filter(name=>!report.cases.some(entry=>entry.name===name)):[];
+  report.coverageComplete=absent.length===0 && report.cases.every(entry=>entry.status==="passed");
+  if(options.requireComplete && !report.coverageComplete)
+    throw Error("--require-complete: cases that did not run: "+[
+      ...report.cases.filter(entry=>entry.status!=="passed").map(entry=>entry.name+" ("+entry.reason+")"),
+      ...absent.map(name=>name+" (no entry in the report)")].join(", "));
   report.verdict="PASS";
 } catch(error) {report.verdict="FAIL";report.error=redact(error.stack);process.exitCode=1;}
 finally {

@@ -13,6 +13,46 @@ images and what they must do. State the Clusterio / Factorio versions when they 
 
 ## 2026-11-26
 
+- **The warning for a mounted plugin whose `npm install` fails says what happened.** Both
+  images. A plugin directory under `/clusterio/external_plugins` now logs `WARNING: npm
+  install failed for plugin '<name>' (exit <code>; npm's output is above). The plugin stays
+  mounted as it is and loads only if its directory already holds what it needs.` Before, it
+  read `WARNING: plugin '<name>' failed to install/build — its bundle may be broken or
+  stale`, also for a plugin that then loaded: npm exits non-zero when one of the plugin's own
+  scripts (`prepare`, `install`) fails, and a plugin mounted with its built files loads all
+  the same. Nothing else changes: the container starts, the other plugins are installed, and
+  a mounted plugin is not built. Change any log filter that matches the old text.
+- **A revision pin is the image `main` published, not a rebuild.** Pushing a
+  `<CLUSTERIO_VERSION>.r<N>` git tag used to build, test and push the tagged commit a second
+  time, and the pin got a digest of its own (`2.1.2.r2` and `:main` differ, from one commit).
+  Now `.github/workflows/release-pin.yml` gives the two images `:main` names the pin tag, by
+  digest, after checking that both were built from the tagged commit. For someone running the
+  images: from the next pin on, `:<version>.rN` and the
+  `:main` build of the same commit are one digest, and the pin's
+  `org.opencontainers.image.version` label reads `main` (the pin tag, the
+  `org.opencontainers.image.revision` label and `/clusterio/BUILD_INFO` identify it). For
+  whoever cuts a pin: tag the commit `:main` was last published from. A tag pushed while that
+  commit's `main` run is still going waits for it. A tag on any other commit that has this
+  workflow fails, naming the commit `:main` was built from, and a pin tag that already names
+  another image is refused; nothing is tagged in either case. GitHub runs the workflow files
+  of the tagged commit, so a tag on a commit from before this change still builds that commit.
+- **CI: a run takes one acceptance pass, not two in a row.** The job that builds the images
+  to publish and runs acceptance on them (`build`) no longer waits for the `test` and
+  `consumer-smoke` jobs; all four start together. A new `publish` job, the only one with
+  registry write access, runs when every job passed: it loads the images `build` accepted
+  from the run's artifact, checks their ids and pushes them. On a pull request it loads and
+  checks them and pushes nothing. It also pushes nothing when the branch has moved past the
+  run's commit, so a slower run of an older commit no longer moves `:main` and `:latest` back.
+  The published tags are unchanged.
+- **Tests.** The acceptance runner's `npm-plugins` case installs a fixture plugin
+  (`tests/npm-fixture/`) from a registry it starts itself (`tests/npm-registry.cjs`), not
+  `timeshade@0.1.1` from registry.npmjs.org, and fails when npm asks that registry for
+  anything it does not hold. `--require-complete` fails a run in which a case did not run;
+  CI passes it for the release images it publishes. `tests/pin-main-images.test.sh` covers
+  which images a revision pin tags, against a stubbed registry.
+
+## 2026-11-26
+
 - **Seeding and export commands no longer wait forever on a controller that does not
   answer.** Controller image only. Every `clusterioctl` call its scripts make to the
   controller now runs under a time limit: 25 s for queries, 60 s for changes (instance

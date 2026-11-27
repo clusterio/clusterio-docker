@@ -1,0 +1,16 @@
+{
+	"name": "ci_npm_fixture",
+	"version": "0.1.0",
+	"description": "Plugin the acceptance runner installs through CLUSTERIO_NPM_PLUGINS from its own registry.",
+	"type": "module",
+	"main": "index.js",
+	"keywords": ["clusterio-plugin"],
+	"license": "MIT",
+	"dependencies": {
+		"ci_npm_fixture_dep": "1.0.0"
+	},
+	"peerDependencies": {
+		"@clusterio/lib": "^2.0.0",
+		"@clusterio/host": "^2.0.0"
+	}
+}

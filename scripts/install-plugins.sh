@@ -32,8 +32,15 @@ install_external_plugins() {
       # bare npm install here operates on the WHOLE monorepo and dies on pnpm's "catalog:"
       # protocol (EUNSUPPORTEDPROTOCOL) — every external-plugin install silently failed.
       # Harmless on the release target (no workspaces field). Caught by the ci_fixture test.
-      if ! (cd "$plugin" && gosu clusterio npm install --omit=dev --workspaces=false); then
-        echo "  WARNING: plugin '$plugin_name' failed to install/build — its bundle may be broken or stale" >&2
+      #
+      # The warning states only what is known here: npm exited non-zero. That happens when a
+      # dependency cannot be installed and also when one of the plugin's own lifecycle scripts
+      # (`prepare`, `install`) fails, and a plugin mounted with its built files loads in the
+      # second case. Building a mounted plugin here is not supported.
+      local rc=0
+      (cd "$plugin" && gosu clusterio npm install --omit=dev --workspaces=false) || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        echo "  WARNING: npm install failed for plugin '$plugin_name' (exit $rc; npm's output is above). The plugin stays mounted as it is and loads only if its directory already holds what it needs." >&2
       fi
 
       # Remove any @clusterio packages that npm may have installed locally.

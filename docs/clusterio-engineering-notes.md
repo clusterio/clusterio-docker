@@ -65,7 +65,7 @@ assets with revalidation.
 The npm `@clusterio/*` release can lack support for a Factorio version that a fork branch has.
 **Images**: a push to any branch other than `main` (branch names without a `/`), and a PR
 into a `factorio-*` branch, builds the `custom` target from the fork branch of the same name;
-`main`, tags and PRs into `main` build `release`. Enabling the DLC mods of a "Space Age" pack
+`main` and PRs into `main` build `release`. Enabling the DLC mods of a "Space Age" pack
 is non-fatal, with a WARNING, on a core that lacks one of the builtins. `BUILD_INFO`'s
 `clusterioTarget` and `clusterioVersion` say which core an image runs.
 

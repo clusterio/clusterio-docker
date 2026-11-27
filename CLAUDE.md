@@ -67,9 +67,12 @@ clusterio-docker/
 │   ├── multi-cluster.md           # Several clusters on one Docker host
 │   ├── plugin-development.md      # Developing a plugin against the images
 │   └── seed-data.md               # Seed data documentation
-└── .github/workflows/
-    ├── docker-build.yml           # CI: gates, tests, build, push to GHCR, GitHub Release
-    └── cache-cleanup.yml          # Deletes a closed PR's build caches
+└── .github/
+    ├── scripts/pin-main-images.sh # release-pin.yml: tags the images main published for a commit
+    └── workflows/
+        ├── docker-build.yml       # CI: gates, tests, build + acceptance, push to GHCR
+        ├── release-pin.yml        # Revision pin tag: retags main's images, GitHub Release
+        └── cache-cleanup.yml      # Deletes a closed PR's build caches
 ```
 
 ## Architecture
@@ -327,9 +330,9 @@ The script compiles TypeScript locally via `pnpm install`, then copies `dist/` d
 
 ## CI Pipeline
 
-The GitHub Actions workflow (`.github/workflows/docker-build.yml`):
-1. Builds both images with Docker Buildx + GHA cache
-2. Pushes to GHCR on non-PR events, once the `gates`, `test` and `consumer-smoke` jobs pass (tags: the branch or git tag name, `<branch>-clusterio-<version>` on branch pushes, plus `latest` and the Clusterio version on `main`)
+The GitHub Actions workflow (`.github/workflows/docker-build.yml`) runs the `gates`, `test`, `consumer-smoke` and `build` jobs side by side, then `publish`:
+1. `build` builds both images with Docker Buildx + GHA cache, runs the acceptance runner on them (on the `release` target every case must run and pass) and saves them as an artifact. It pushes nothing and has no registry write access.
+2. `publish` runs only when all four jobs passed. It loads the saved images, compares their ids with the ones `build` accepted and, on non-PR events, pushes them to GHCR (tags: the branch name, `<branch>-clusterio-<version>` on branch pushes, plus `latest` and the Clusterio version on `main`). On a pull request it loads and checks them and pushes nothing. It also pushes nothing, with a warning, when the branch has moved past the run's commit: that newer commit's run publishes.
 3. Runs integration tests (the `test` job):
    - Database seeding (admin user)
    - Mod seeding (upload + host pre-cache)
@@ -344,7 +347,7 @@ Releases happen on the default branch (`main`) and build the **`release`** targe
 1. **Bump the version** — set `ARG CLUSTERIO_VERSION` to the new Clusterio version in **both** `Dockerfile.controller` and `Dockerfile.host` (e.g. `2.1.2`). This single value pins the `@clusterio/*` npm packages **and** the published image tag. Update the version references in this file, `README.md`, and `docs/consumer-integration.md` to match (CI's version-assert gate fails otherwise). In the same PR, point **both** `PREVIOUS_HOST_IMAGE` and `PREVIOUS_CONTROLLER_IMAGE` in `.github/workflows/docker-build.yml` at the digests of the newest published pin of the **outgoing** version (`docker buildx imagetools inspect ghcr.io/clusterio/clusterio-docker-host:<old-version>.r<N> --format '{{.Manifest.Digest}}'`, and the same for `clusterio-docker-controller`) so the `upgrade` and `cluster-upgrade` acceptance cases cross the version boundary being released — no gate checks this.
 2. **Open a PR → merge to `main`.** On a PR, CI builds the `release` target and runs the full integration suite (seeding, instance start, idempotent restart) — exactly what will publish. Merge once green.
 3. **Publish is automatic on the `main` push.** Both images publish to GHCR tagged `:latest` **and** `:<CLUSTERIO_VERSION>` (e.g. `:2.1.2`). The version tag is read from the `CLUSTERIO_VERSION` build arg, so it always matches what's installed. These are **moving** tags — a rebuild on the same Clusterio version overwrites them.
-4. **Cut an immutable revision pin** — to publish a reproducible pin, `git tag <CLUSTERIO_VERSION>.r<N>` (e.g. `2.1.2.r1`) and push the tag. CI's tag build publishes `:<CLUSTERIO_VERSION>.r<N>` verbatim on the `release` target, then its `release` job creates the GitHub Release `<tag> — Clusterio <version>` with the top `CHANGELOG.md` entry as notes (an existing release is left unchanged). `.rN` resets to `r1` on each Clusterio bump; increment it for docker-layer rebuilds/fixes that ship on the same Clusterio version. See "Versioning" below.
+4. **Cut an immutable revision pin** — `git tag <CLUSTERIO_VERSION>.r<N>` (e.g. `2.1.2.r1`) on the commit `:main` was last published from, and push the tag. `.github/workflows/release-pin.yml` builds nothing: `.github/scripts/pin-main-images.sh` checks that both `:main` images were built from the tagged commit (their `org.opencontainers.image.revision` label) and gives those two digests the tag `:<CLUSTERIO_VERSION>.r<N>`; then the `release` job creates the GitHub Release `<tag> — Clusterio <version>` with the top `CHANGELOG.md` entry as notes (an existing release is left unchanged). A tag pushed while that commit's `main` run is still going waits for the run. The job fails, and tags nothing, when `:main` was built from another commit, when the tag does not start with `CLUSTERIO_VERSION`, or when the pin tag already names another image. GitHub runs the workflow files of the tagged commit: a tag on a commit that predates `release-pin.yml` runs that commit's `docker-build.yml` tag build. `.rN` resets to `r1` on each Clusterio bump; increment it for docker-layer rebuilds/fixes that ship on the same Clusterio version. See "Versioning" below.
 5. **Make packages public (one-time).** GHCR packages default to private. To allow public `docker pull`: GitHub → profile → Packages → each package (`clusterio-docker-controller`, `clusterio-docker-host`) → Package settings → Change visibility → Public.
 
 ### Versioning (Clusterio version + docker revision)
@@ -354,7 +357,7 @@ clusterio-docker's version **tracks the Clusterio version**, with a docker-layer
 SemVer: a `v*` git tag matches no workflow trigger. Tags carried by a build:
 
 - `:<CLUSTERIO_VERSION>` — e.g. `:2.1.2` — the bundled Clusterio version. **Moves** as the docker layer rebuilds.
-- `:<CLUSTERIO_VERSION>.rN` — e.g. `:2.1.2.r1` — the **immutable** pin (cut a git tag to mint one). `N` resets to `r1` on each Clusterio bump; bump it for docker-layer changes on the same Clusterio version.
+- `:<CLUSTERIO_VERSION>.rN` — e.g. `:2.1.2.r1` — the **immutable** pin (cut a git tag to mint one). It names the same digest `:main` had for that commit. `N` resets to `r1` on each Clusterio bump; bump it for docker-layer changes on the same Clusterio version.
 - `:latest`, `:main` — newest `main` build. Move.
 
 **Separator is `.` not `-`**: a hyphen (`2.0.0-alpha.27-r1`) makes `27-r1` a single alphanumeric
@@ -377,7 +380,7 @@ The `custom`/fork path is for a Factorio line the npm release does not support (
 `factorio-<X.Y>` off `main`) and for testing a Clusterio fork branch. `main` builds `release`
 (npm); only the paths below build `custom`.
 
-Non-main branch **pushes** automatically build from the Clusterio fork instead of npm packages (pull requests into `main`, `main`, and tags build the `release` target so CI validates exactly what gets published):
+Non-main branch **pushes** automatically build from the Clusterio fork instead of npm packages (pull requests into `main` and `main` build the `release` target so CI validates exactly what gets published; a revision pin tag builds nothing):
 
 1. CI clones `https://github.com/solarcloud7/clusterio` at the **matching branch name**
 2. If the branch doesn't exist in the fork, it falls back to the fork's **default branch** (`master`)
@@ -398,7 +401,7 @@ git push  # → CI builds :my-feature images from the fork's branch
 #   image: ghcr.io/clusterio/clusterio-docker-host:my-feature
 ```
 
-`main`, tags, and PRs into `main` use `CLUSTERIO_TARGET=release` (npm registry packages); non-main branch pushes and PRs into `factorio-*` branches build `custom`.
+`main` and PRs into `main` use `CLUSTERIO_TARGET=release` (npm registry packages); non-main branch pushes and PRs into `factorio-*` branches build `custom`.
 
 ## Included Clusterio Plugins
 
